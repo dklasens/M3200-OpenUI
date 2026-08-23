@@ -96,6 +96,10 @@ export default function UpdatesCard() {
   }
 
   const offer = check && (check.update_available || check.same_version) ? check : null
+  // A stale persisted check can claim update_available for the version that
+  // is already installed; the label always compares against the live version.
+  const isUpdate = !!offer && offer.update_available &&
+    offer.latest_version !== data?.current_version
 
   return (
     <Card
@@ -161,7 +165,7 @@ export default function UpdatesCard() {
               variant="primary"
               onClick={() => handleInstall(offer.same_version, offer.latest_version)}
             >
-              {offer.update_available ? `Update to ${offer.latest_version}` : 'Reinstall'}
+              {isUpdate ? `Update to ${offer.latest_version}` : 'Reinstall'}
             </Button>
           </div>
         </div>

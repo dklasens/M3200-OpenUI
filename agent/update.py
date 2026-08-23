@@ -90,6 +90,15 @@ def _load_state(agent_dir):
             STATE["last_check"] = saved.get("last_check")
             STATE["last_install"] = saved.get("last_install")
             STATE["error"] = saved.get("error")
+        # A last_check captured before an install/deploy describes the old
+        # version; showing it would offer an "update" to what already runs.
+        with STATE_LOCK:
+            stale = STATE["last_check"]
+        if stale and str(stale.get("result", {}).get(
+                "current_version", "")) != current_version(agent_dir):
+            with STATE_LOCK:
+                STATE["last_check"] = None
+            _persist(agent_dir)
     except (OSError, ValueError):
         pass
 
@@ -364,6 +373,17 @@ def install(agent_dir, service_path="/etc/systemd/system/m3200-agent.service",
 
         step("restart")
         _run(["systemctl", "daemon-reload"], timeout=30)
+        # The just-installed version is by definition current: refresh the
+        # check record so the dashboard never offers it back as an update.
+        with STATE_LOCK:
+            STATE["last_check"] = {"ts": time.time(), "result": {
+                "repo": repo(), "current_version": latest,
+                "latest_version": latest, "tag": release.get("tag_name"),
+                "name": release.get("name"),
+                "published_at": release.get("published_at"),
+                "notes": release.get("body") or "",
+                "size": manifest.get("size"),
+                "update_available": False, "same_version": True}}
         timer = threading.Timer(1.5, restart_agent)
         timer.daemon = True
         timer.start()

@@ -256,6 +256,35 @@ class SettingsTests(unittest.TestCase):
             update.STATE.update(original)
 
 
+    def test_stale_last_check_dropped_on_load(self):
+        original = dict(update.STATE)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                os.makedirs(update.update_dir(tmp), exist_ok=True)
+                with open(update._state_path(tmp), "w", encoding="utf-8") as f:
+                    json.dump({
+                        "last_check": {"ts": 1, "result": {
+                            "current_version": "0.7",
+                            "latest_version": "0.8",
+                            "update_available": True}},
+                        "last_install": {"ok": True, "message": "installed 0.8"},
+                        "error": None,
+                    }, f)
+                with open(os.path.join(tmp, "version"), "w", encoding="utf-8") as f:
+                    f.write("0.8\n")
+                update.STATE.clear()
+                update.STATE.update(busy=False, last_check=None,
+                                    last_install=None, error=None)
+                update._load_state(tmp)
+                # The pre-install check described the old version: dropped.
+                self.assertIsNone(update.STATE["last_check"])
+                # The install record survives.
+                self.assertTrue(update.STATE["last_install"]["ok"])
+        finally:
+            update.STATE.clear()
+            update.STATE.update(original)
+
+
 def base(server):
     return "http://127.0.0.1:%d" % server.server_port
 
