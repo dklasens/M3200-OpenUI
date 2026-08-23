@@ -1,0 +1,16 @@
+{
+  "name": "M3200 OpenUI",
+  "short_name": "M3200",
+  "start_url": "./",
+  "display": "standalone",
+  "theme_color": "#f9f9fa",
+  "background_color": "#f9f9fa",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

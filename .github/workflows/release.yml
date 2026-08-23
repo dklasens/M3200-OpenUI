@@ -1,0 +1,69 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web-app/package-lock.json
+
+      - name: Build dashboard
+        run: |
+          cd web-app
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Assemble update package
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          PKG=package/m3200-openui
+          mkdir -p "$PKG/agent" "$PKG/www" dist-release
+          echo "$VERSION" > "$PKG/version"
+          cp -r web-app/dist/. "$PKG/www/"
+          cp agent/m3200_agent.py agent/qmi.py agent/update.py agent/m3200-agent.service "$PKG/agent/"
+          if [ -f apply.sh ]; then cp apply.sh "$PKG/"; fi
+          tar -C package -czf "dist-release/m3200-openui-$TAG.tar.gz" m3200-openui
+          python3 - <<'EOF'
+          import hashlib, json, os, pathlib
+          tag = os.environ["GITHUB_REF_NAME"]
+          asset = f"m3200-openui-{tag}.tar.gz"
+          path = pathlib.Path("dist-release") / asset
+          manifest = {
+              "version": tag.lstrip("v"),
+              "asset": asset,
+              "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+              "size": path.stat().st_size,
+              "requires_reboot": False,
+          }
+          (pathlib.Path("dist-release") / "manifest.json").write_text(
+              json.dumps(manifest, indent=2) + "\n")
+          print(json.dumps(manifest, indent=2))
+          EOF
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          PRE=""
+          case "$TAG" in *-*) PRE="--prerelease" ;; esac
+          gh release create "$TAG" $PRE \
+            --title "M3200-OpenUI $TAG" \
+            --notes "Automated build of $TAG. The device updater reads manifest.json, verifies the tarball sha256, and applies agent + dashboard + optional apply.sh." \
+            "dist-release/m3200-openui-$TAG.tar.gz" \
+            dist-release/manifest.json

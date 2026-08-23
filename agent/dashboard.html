@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M3200 OpenUI</title>
+<style>
+  :root { --bg:#0b0f14; --card:#131a22; --fg:#dbe4ee; --dim:#7d8ea1;
+          --ok:#39d98a; --warn:#ffb020; --bad:#ff5c5c; --acc:#4da3ff; }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--fg); font:14px/1.45 system-ui,sans-serif; padding:14px; }
+  h1 { font-size:17px; } h1 small { color:var(--dim); font-weight:400; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); margin:0 0 8px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:12px; margin-top:12px; }
+  .card { background:var(--card); border:1px solid #1f2a36; border-radius:10px; padding:12px 14px; }
+  .row { display:flex; justify-content:space-between; gap:8px; padding:3px 0; }
+  .row b { font-weight:600; } .row span { color:var(--dim); }
+  .big { font-size:26px; font-weight:700; }
+  .unit { font-size:12px; color:var(--dim); font-weight:400; }
+  .chips { display:flex; flex-wrap:wrap; gap:5px; }
+  .chip { background:#1c2632; border:1px solid #2a3948; border-radius:20px; padding:2px 9px; font-size:12px; }
+  .chip.off { opacity:.28; }
+  .chip.nr { border-color:var(--acc); }
+  .band-option { display:inline-flex; align-items:center; gap:5px; background:#1c2632;
+                 border:1px solid #2a3948; border-radius:20px; padding:3px 9px;
+                 font-size:12px; cursor:pointer; user-select:none; }
+  .band-option.nr { border-color:var(--acc); }
+  .band-option input { accent-color:var(--acc); }
+  .band-actions { display:flex; flex-wrap:wrap; align-items:center; gap:7px; margin-top:12px; }
+  button, select { background:#1c2632; color:var(--fg); border:1px solid #33465a;
+                   border-radius:6px; padding:6px 9px; font:inherit; }
+  button { cursor:pointer; } button.primary { background:#164d7d; border-color:var(--acc); }
+  button.danger { border-color:var(--warn); }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  .band-note { color:var(--dim); font-size:12px; margin-top:8px; }
+  #band-message { min-height:20px; margin-top:8px; color:var(--dim); }
+  #band-message.ok { color:var(--ok); } #band-message.bad { color:var(--bad); }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  th { text-align:left; color:var(--dim); font-weight:500; padding:3px 6px; border-bottom:1px solid #22303e; }
+  td { padding:3px 6px; border-bottom:1px solid #18222c; }
+  .pill { border-radius:5px; padding:1px 7px; font-size:11px; font-weight:600; }
+  .pill.on { background:#0d3324; color:var(--ok); } .pill.off { background:#33160d; color:var(--warn); }
+  .combo-tools { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:9px 0; }
+  .combo-scroll { overflow:auto; max-height:390px; }
+  .combo-label { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; }
+  .combo-active { color:var(--ok); margin:6px 0; }
+  #err { color:var(--bad); padding:6px 0; display:none; }
+  .foot { color:var(--dim); font-size:11px; margin-top:14px; }
+  a { color:var(--acc); }
+</style>
+</head>
+<body>
+<h1>M3200 <small>OpenUI</small> &nbsp;<span id="mode" class="pill off">…</span></h1>
+<div id="err"></div>
+<div class="grid">
+  <div class="card">
+    <h2>LTE anchor</h2>
+    <div class="row"><span>RSRP</span><b class="big" id="lte-rsrp">–</b></div>
+    <div class="row"><span>RSRQ</span><b id="lte-rsrq">–</b></div>
+    <div class="row"><span>RSSI</span><b id="lte-rssi">–</b></div>
+    <div class="row"><span>SINR</span><b id="lte-snr">–</b></div>
+  </div>
+  <div class="card">
+    <h2>NR5G</h2>
+    <div class="row"><span>RSRP</span><b class="big" id="nr-rsrp">–</b></div>
+    <div class="row"><span>RSRQ</span><b id="nr-rsrq">–</b></div>
+    <div class="row"><span>SNR</span><b id="nr-snr">–</b></div>
+    <div class="row"><span>state</span><b id="nr-state">–</b></div>
+  </div>
+  <div class="card">
+    <h2>Carrier aggregation</h2>
+    <div id="ca">–</div>
+  </div>
+  <div class="card" style="grid-column:1/-1">
+    <h2>Advertised carrier combinations</h2>
+    <div id="ca-combinations">Loading decoded capability data…</div>
+  </div>
+  <div class="card">
+    <h2>Serving cell</h2>
+    <div id="serving">–</div>
+  </div>
+  <div class="card">
+    <h2>Device &amp; network</h2>
+    <div id="device">–</div>
+  </div>
+  <div class="card">
+    <h2>Neighbour cells</h2>
+    <div id="cells">–</div>
+  </div>
+  <div class="card" style="grid-column:1/-1">
+    <h2>Bands — allowed preference within hardware capability</h2>
+    <div id="bands">–</div>
+  </div>
+</div>
+<div class="foot" id="foot"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmt = (v,u,d=1) => (v===null||v===undefined) ? "–" :
+  `${typeof v==="number"?v.toFixed(d):v} <span class="unit">${u}</span>`;
+const esc = value => String(value).replace(/[&<>"']/g, c =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
+
+async function j(url){ const r = await fetch(url); if(!r.ok) throw 0; return r.json(); }
+
+let guiWriteSession = null;
+
+async function getGuiWriteSession(force=false){
+  if(!force && guiWriteSession && guiWriteSession.expiresAt>Date.now()+5000)
+    return guiWriteSession.nonce;
+  const r=await fetch("/api/session",{cache:"no-store",credentials:"same-origin"});
+  if(!r.ok) throw new Error("Unable to start a GUI write session.");
+  const data=await r.json();
+  guiWriteSession={nonce:data.write_nonce,
+                   expiresAt:Date.now()+(data.expires_in||1800)*1000};
+  return guiWriteSession.nonce;
+}
+
+async function postj(url, body, retry=true){
+  const nonce=await getGuiWriteSession();
+  const r = await fetch(url, {
+    method:"POST",
+    credentials:"same-origin",
+    headers:{"Content-Type":"application/json", "X-M3200-Session":nonce,
+             "X-M3200-Confirm":"apply-bands"},
+    body:JSON.stringify(body)
+  });
+  if(r.status===403 && retry){
+    guiWriteSession=null;
+    await getGuiWriteSession(true);
+    return postj(url,body,false);
+  }
+  let data = {};
+  try { data = await r.json(); } catch(e) {}
+  if(!r.ok) throw new Error(data.error || `request failed (${r.status})`);
+  return data;
+}
+
+function caHtml(ca, sys){
+  let rows = [];
+  const nr = sys && sys.system && sys.system.nr;
+  const lte = sys && sys.system && sys.system.lte;
+  const stock = sys && sys.stock || {};
+  const nrBw = String(stock.statusBarBandwidth||"").trim();
+  if(ca && !ca.error){
+    if(ca.pcc) rows.push(`<div class="row"><span>PCC</span><b>B${ca.pcc.band} · ${ca.pcc.dl_bw_mhz} MHz · PCI ${ca.pcc.pci} · EARFCN ${ca.pcc.earfcn}</b></div>`);
+    for(const s of ca.scc||[])
+      rows.push(`<div class="row"><span>SCC</span><b>B${s.band} · ${s.dl_bw_mhz} MHz · PCI ${s.pci} · EARFCN ${s.earfcn} ${s.state?"· act":""}</b></div>`);
+  }
+  if(nr && nr.band){
+    const role = lte && lte.cell_id ? "NR SCG" : "NR SA";
+    rows.push(`<div class="row"><span>${role}</span><b class="nr">${nr.band}${nrBw?` · ${nrBw}`:""} · PCI ${nr.pci} · ARFCN ${nr.arfcn}</b></div>`);
+  }
+  if(ca && !ca.error && ca.pcc)
+    rows.push(`<div class="row"><span>LTE total DL</span><b>${ca.total_dl_bw_mhz} MHz</b></div>`);
+  if(!rows.length)
+    return `<span class="unit">${ca&&ca.error||"no active carriers"}</span>`;
+  return rows.join("");
+}
+
+function plmnLabel(value){
+  const plmn=String(value||"").trim();
+  return /^\d{5,6}$/.test(plmn) ? `${plmn.slice(0,3)}-${plmn.slice(3)}` : plmn;
+}
+
+let caCapabilityData = null, caCapabilityKind = "mrdc", caEligibleOnly = false;
+
+function groupedCombinations(items){
+  const grouped = new Map();
+  for(const item of items||[]){
+    const found = grouped.get(item.label);
+    if(found) found.variants++;
+    else grouped.set(item.label,{label:item.label,components:item.components||[],variants:1});
+  }
+  return [...grouped.values()];
+}
+
+function currentBandSets(){
+  const p=(bandData&&bandData.preferences)||{};
+  const checked = kind => {
+    const elements=[...document.querySelectorAll(`input[data-band-kind="${kind}"]`)];
+    return elements.length ? new Set(elements.filter(el=>el.checked).map(el=>+el.value)) : null;
+  };
+  return {
+    lte:checked("lte")||new Set(p.lte_bands_ext||p.lte_bands||[]),
+    sa:checked("sa")||new Set(p.nr5g_sa_bands||[]),
+    nsa:checked("nsa")||new Set(p.nr5g_nsa_bands||[])
+  };
+}
+
+function combinationEligible(item){
+  const selected=currentBandSets();
+  const nrSelected=caCapabilityKind==="nr" ? selected.sa : selected.nsa;
+  return (item.components||[]).every(component =>
+    (component.rat==="lte"?selected.lte:nrSelected).has(+component.band));
+}
+
+function renderCaCombinations(){
+  if(!caCapabilityData) return;
+  const data=caCapabilityData, summary=data.summary||{}, capture=data.capture||{};
+  const validation=data.nr_ca_validation||{}, validatedCases=validation.cases||[];
+  let content="";
+  if(data.active) content += `<div class="combo-active">Active now: <b>${esc(data.active.label)}</b></div>`;
+  if(validatedCases.length){
+    const max=(validation.conclusion||{}).max_component_count||1;
+    content += `<div class="band-note">DIAG-verified Vodafone SA maximum: <b>${max} NR carriers</b>. This is captured RRC evidence, not a continuously live SCell reading.</div>`;
+  }
+  content += `<div class="chips">
+    <span class="chip">${summary.lte_ca_configurations||0} LTE CA entries / ${groupedCombinations((data.lte||[]).filter(x=>x.is_ca)).length} layouts</span>
+    <span class="chip nr">${summary.mrdc_configurations||0} MR-DC entries / ${groupedCombinations(data.mrdc).length} layouts</span>
+    <span class="chip nr">${summary.nr_ca_configurations||0} NR-CA entries</span>
+  </div>
+  <div class="combo-tools">
+    <select id="combo-kind">
+      <option value="lte">LTE CA</option><option value="mrdc">LTE + NR (NSA/MR-DC)</option>
+      <option value="nr">NR CA capability</option><option value="validated">Vodafone SA verified</option><option value="observed">Observed live</option>
+    </select>
+    <label><input id="combo-eligible" type="checkbox" ${caEligibleOnly?"checked":""}> only layouts allowed by the current band selection</label>
+  </div>`;
+
+  if(caCapabilityKind==="validated"){
+    content += `<div class="combo-scroll"><table><tr><th>Allowed SA mask</th><th>Decoded RRC result</th><th>SCell configured</th><th>Captured</th></tr>`;
+    for(const item of validatedCases) content += `<tr><td>${(item.requested_sa_bands||[]).map(x=>`n${x}`).join(" + ")}</td>
+      <td class="combo-label">${esc(item.label)}</td><td><span class="pill ${item.scell_configured?"on":"off"}">${item.scell_configured?"yes":"no"}</span></td>
+      <td>${new Date((item.capture||{}).completed_at).toLocaleString()}</td></tr>`;
+    content += validatedCases.length?"</table></div>":"</table><div class=\"band-note\">No DIAG-validated NR-CA cases are installed.</div></div>";
+  } else if(caCapabilityKind==="observed"){
+    const observed=data.observed||[];
+    content += `<div class="combo-scroll"><table><tr><th>Observed layout</th><th>First seen</th><th>Last seen</th><th>Polls</th></tr>`;
+    for(const item of observed) content += `<tr><td class="combo-label">${esc(item.label)}</td>
+      <td>${new Date(item.first_seen*1000).toLocaleString()}</td><td>${new Date(item.last_seen*1000).toLocaleString()}</td>
+      <td>${item.seen_count||1}</td></tr>`;
+    content += observed.length?"</table></div>":"</table><div class=\"band-note\">No aggregated layout has been observed since tracking began.</div></div>";
+  } else {
+    let entries = caCapabilityKind==="lte" ? (data.lte||[]).filter(x=>x.is_ca) :
+      caCapabilityKind==="mrdc" ? (data.mrdc||[]) : (data.nr||[]);
+    entries=groupedCombinations(entries).map(item=>({...item,eligible:combinationEligible(item)}));
+    if(caEligibleOnly) entries=entries.filter(item=>item.eligible);
+    content += `<div class="combo-scroll"><table><tr><th>Band / bandwidth-class layout</th><th>Variants</th><th>Selected bands</th></tr>`;
+    for(const item of entries) content += `<tr><td class="combo-label">${esc(item.label)}</td><td>${item.variants}</td>
+      <td><span class="pill ${item.eligible?"on":"off"}">${item.eligible?"allowed":"excluded"}</span></td></tr>`;
+    content += entries.length?"</table></div>":"</table><div class=\"band-note\">No advertised layouts match this view.</div></div>";
+  }
+  content += `<div class="band-note">${esc(capture.scope||"")} · ${esc(capture.network||"")} · captured ${new Date(capture.completed_at).toLocaleString()}.
+    Classes A/C etc. are 3GPP bandwidth classes. These are modem-advertised capabilities, not a promise that the carrier will deploy or schedule them.</div>`;
+  $("ca-combinations").innerHTML=content;
+  $("combo-kind").value=caCapabilityKind;
+  $("combo-kind").onchange=e=>{caCapabilityKind=e.target.value;renderCaCombinations();};
+  $("combo-eligible").onchange=e=>{caEligibleOnly=e.target.checked;renderCaCombinations();};
+}
+
+async function pollCaCombinations(){
+  try { caCapabilityData=await j("/api/ca/combinations"); renderCaCombinations(); }
+  catch(e){ $("ca-combinations").innerHTML='<span class="unit">capability data unavailable</span>'; }
+}
+
+async function pollStatus(){
+  try {
+    const s = await j("/api/status");
+    $("err").style.display = "none";
+    const sig = s.signal||{}, lte = sig.lte||{}, nr = sig.nr||{};
+    $("lte-rsrp").innerHTML = fmt(lte.rsrp_dbm,"dBm",0);
+    $("lte-rsrq").innerHTML = fmt(lte.rsrq_db,"dB",0);
+    $("lte-rssi").innerHTML = fmt(lte.rssi_dbm,"dBm",0);
+    $("lte-snr").innerHTML  = fmt(lte.snr_db,"dB");
+    $("nr-rsrp").innerHTML  = fmt(nr.rsrp_dbm,"dBm",0);
+    $("nr-rsrq").innerHTML  = fmt(nr.rsrq_db,"dB",0);
+    $("nr-snr").innerHTML   = fmt(nr.snr_db,"dB");
+    const sys = s.system||{}, lteSys = sys.lte||{}, nrSys = sys.nr||{};
+    const st = s.stock||{};
+    const endc = s.endc && s.endc.endc_enabled;
+    const mode = $("mode");
+    const nrActive = nrSys.pci!==null && nrSys.pci!==undefined;
+    const lteActive = !!(lteSys.cell_id || (s.ca && !s.ca.error && s.ca.pcc));
+    const nrBand = nrSys.band || String(st.statusBarBand||"").trim() || "?";
+    const nrBw = String(st.statusBarBandwidth||"").trim();
+    if(nrActive && lteActive){ mode.textContent = `5G NSA · ${nrBand}`; mode.className="pill on"; }
+    else if(nrActive){ mode.textContent = `5G SA · ${nrBand}`; mode.className="pill on"; }
+    else { mode.textContent = lteActive ? "LTE" : "searching"; mode.className="pill off"; }
+    $("nr-state").textContent = nrActive ?
+      [nrBand,nrBw,`PCI ${nrSys.pci}`,nrSys.arfcn!==undefined?`ARFCN ${nrSys.arfcn}`:null].filter(Boolean).join(" · ") :
+      "not active";
+    $("ca").innerHTML = caHtml(s.ca, s);
+    $("serving").innerHTML = !lteActive && nrActive ? `
+      <div class="row"><span>Mode</span><b>5G SA</b></div>
+      <div class="row"><span>Band</span><b class="nr">${nrBand}${nrBw?` · ${nrBw}`:""}</b></div>
+      <div class="row"><span>PLMN</span><b>${plmnLabel(nrSys.plmn)||"–"}</b></div>
+      <div class="row"><span>PCI</span><b>${nrSys.pci}</b></div>
+      <div class="row"><span>NR-ARFCN</span><b>${nrSys.arfcn??"–"}</b></div>` : lteSys.cell_id ? `
+      <div class="row"><span>PLMN</span><b>${lteSys.mcc}-${lteSys.mnc}${lteSys.roaming?" (roaming)":""}</b></div>
+      <div class="row"><span>Cell ID</span><b>0x${lteSys.cell_id.toString(16).toUpperCase()}</b></div>
+      <div class="row"><span>TAC</span><b>${lteSys.tac}</b></div>` : "–";
+    $("foot").textContent =
+      `updated ${new Date(s.ts*1000).toLocaleTimeString()} · ` +
+      `${st.statusBarNetwork||""} · battery ${st.statusBarBatteryPercent||"?"}% · ` +
+      `clients ${st.statusBarClientListSize||"?"} · ` +
+      `DL ${((+st.statusBarBytesReceived||0)/1e6).toFixed(1)} MB / UL ${((+st.statusBarBytesTransmitted||0)/1e6).toFixed(1)} MB`;
+  } catch(e){ $("err").style.display="block"; $("err").textContent = "agent unreachable"; }
+}
+
+async function pollCells(){
+  try {
+    const c = await j("/api/cells");
+    let t = `<table><tr><th></th><th>PCI</th><th>RSRP</th><th>RSRQ</th><th>RSSI</th></tr>`;
+    const row = (tag,cc)=>`<tr><td>${tag}</td><td>${cc.pci}</td><td>${cc.rsrp_dbm.toFixed(1)}</td><td>${cc.rsrq_db.toFixed(1)}</td><td>${cc.rssi_dbm.toFixed(1)}</td></tr>`;
+    if(c.intra_freq){
+      (c.intra_freq.cells||[]).forEach((cc,i)=>{
+        t += row(i===0?`B${c.intra_freq.band} srv`:`B${c.intra_freq.band}`, cc); });
+    }
+    for(const f of c.inter_freq||[])
+      (f.cells||[]).forEach(cc=>{ t += row(`B${f.band} @${f.earfcn}`, cc); });
+    $("cells").innerHTML = t+"</table>";
+  } catch(e){}
+}
+
+let bandData = null, bandDirty = false;
+
+function selectedBands(kind){
+  return [...document.querySelectorAll(`input[data-band-kind="${kind}"]:checked`)]
+    .map(el=>+el.value).sort((a,b)=>a-b);
+}
+
+function setBandMessage(text, ok){
+  const el = $("band-message");
+  if(!el) return;
+  el.textContent = text;
+  el.className = ok===true ? "ok" : ok===false ? "bad" : "";
+}
+
+function renderBands(b){
+  const p = b.preferences||{}, caps = b.capabilities||{}, control = b.control||{};
+  const writeEnabled=control.gui_session_enabled||control.write_enabled;
+  const group = (kind, selected, supported, prefix, cls) =>
+    (supported||[]).map(x=>`<label class="band-option ${cls}"><input type="checkbox"
+      data-band-kind="${kind}" value="${x}" ${(selected||[]).includes(x)?"checked":""}>${prefix}${x}</label>`).join("");
+  const permanent = control.permanent_enabled ?
+    `<option value="permanent">Permanent</option>` : "";
+  $("bands").innerHTML =
+    `<div class="row"><span>Mode pref (unchanged by this control)</span><b>${(p.mode_pref||[]).join(", ")||"–"}</b></div>
+     <h2 style="margin-top:8px">LTE</h2><div class="chips">${group("lte", p.lte_bands_ext||p.lte_bands, caps.lte_bands, "B", "")}</div>
+     <h2 style="margin-top:8px">NR5G SA</h2><div class="chips">${group("sa", p.nr5g_sa_bands, caps.nr5g_sa_bands, "n", "nr")}</div>
+     <h2 style="margin-top:8px">NR5G NSA</h2><div class="chips">${group("nsa", p.nr5g_nsa_bands, caps.nr5g_nsa_bands, "n", "nr")}</div>
+     <div class="band-actions">
+       <button id="band-current">Current</button><button id="band-all">All hardware bands</button>
+       <select id="band-duration"><option value="power_cycle">Until reboot</option>${permanent}</select>
+       <button id="band-apply" class="primary" ${writeEnabled?"":"disabled"}>Apply selection</button>
+       <button id="band-restore" class="danger" ${control.baseline?"":"disabled"}>Restore original</button>
+     </div>
+     <div class="band-note">Changing bands can briefly interrupt cellular service. LTE cannot be empty, and at least one NR path must remain selected.
+       GUI authorization is automatic for this same-origin dashboard session.
+       ${control.permanent_enabled?"Permanent writes have passed reboot verification.":"Permanent writes remain disabled pending reboot verification."}</div>
+     <div id="band-message"></div>`;
+  document.querySelectorAll("input[data-band-kind]").forEach(el=>{
+    el.onchange = () => { bandDirty=true; setBandMessage("Selection changed; not yet applied."); renderCaCombinations(); };
+  });
+  $("band-current").onclick = () => setBandPreset("current");
+  $("band-all").onclick = () => setBandPreset("all");
+  $("band-apply").onclick = applyBandSelection;
+  $("band-restore").onclick = restoreBandBaseline;
+}
+
+function setBandPreset(preset){
+  if(!bandData) return;
+  const p=bandData.preferences||{}, c=bandData.capabilities||{};
+  const values = preset==="all" ?
+    {lte:c.lte_bands||[], sa:c.nr5g_sa_bands||[], nsa:c.nr5g_nsa_bands||[]} :
+    {lte:p.lte_bands_ext||p.lte_bands||[], sa:p.nr5g_sa_bands||[], nsa:p.nr5g_nsa_bands||[]};
+  for(const kind of ["lte","sa","nsa"])
+    document.querySelectorAll(`input[data-band-kind="${kind}"]`).forEach(el=>el.checked=values[kind].includes(+el.value));
+  bandDirty = preset!=="current";
+  setBandMessage(preset==="all" ? "All hardware-supported bands selected; click Apply selection." : "Reverted to the current live selection.");
+}
+
+async function applyBandSelection(){
+  const body={lte_bands:selectedBands("lte"), nr5g_sa_bands:selectedBands("sa"),
+              nr5g_nsa_bands:selectedBands("nsa"), duration:$("band-duration").value};
+  if(!confirm(`Apply the selected bands ${body.duration==="permanent"?"permanently":"until reboot"}? Cellular service may briefly drop.`)) return;
+  $("band-apply").disabled=true; setBandMessage("Applying and verifying…");
+  try {
+    const result=await postj("/api/bands/apply",body);
+    bandDirty=false; await pollBands(true);
+    setBandMessage(result.ok ? "Selection applied and verified." : "The modem read-back did not match the request.",result.ok);
+  } catch(e){ setBandMessage(e.message,false); $("band-apply").disabled=false; }
+}
+
+async function restoreBandBaseline(){
+  const duration=$("band-duration").value;
+  if(!confirm(`Restore the original carrier band preferences ${duration==="permanent"?"permanently":"until reboot"}?`)) return;
+  try {
+    const result=await postj("/api/bands/restore",{duration});
+    bandDirty=false; await pollBands(true); setBandMessage("Original carrier preferences restored and verified.",result.ok);
+  } catch(e){ setBandMessage(e.message,false); }
+}
+
+async function pollBands(force=false){
+  try {
+    const b = await j("/api/bands");
+    bandData=b;
+    if(force || !bandDirty) renderBands(b);
+    renderCaCombinations();
+  } catch(e){}
+}
+
+async function pollDevice(){
+  try {
+    const d = await j("/api/device");
+    $("device").innerHTML =
+      `<div class="row"><span>Device</span><b>${d.manufacturer||""} ${d.model||""}</b></div>
+       <div class="row"><span>Firmware</span><b>${d.firmware_revision||"–"}</b></div>
+       <div class="row"><span>Hardware</span><b>${d.hardware_revision||"–"}</b></div>
+       <div class="row"><span>IMEI</span><b>${d.imei||"–"}</b></div>
+       <div class="row"><span>ICCID</span><b>${d.iccid||"–"}</b></div>`;
+  } catch(e){}
+}
+
+pollStatus(); pollCells(); pollBands(); pollDevice(); pollCaCombinations();
+setInterval(pollStatus, 3000);
+setInterval(pollCells, 5000);
+setInterval(pollBands, 30000);
+setInterval(pollDevice, 60000);
+setInterval(pollCaCombinations, 30000);
+</script>
+</body>
+</html>

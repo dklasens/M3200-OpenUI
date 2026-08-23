@@ -1,0 +1,14 @@
+artifacts/
+__pycache__/
+*.pyc
+*.log
+
+# reference project (source of the dashboard port, not part of this repo)
+MU5250-OpenUI-main/
+
+# device captures: EFS images, DIAG logs, signed profiles (large/sensitive)
+captures/
+
+# local tooling
+.tools/
+*.bak

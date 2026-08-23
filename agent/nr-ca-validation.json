@@ -1,0 +1,149 @@
+{
+  "schema_version": 1,
+  "network": "Vodafone AU (505-03)",
+  "method": "3GPP NR RRC CellGroupConfig decoded from Qualcomm 0xB821 DIAG",
+  "scope": "Controlled SA band-mask tests during bounded downlink traffic",
+  "cases": [
+    {
+      "requested_sa_bands": [
+        1,
+        28
+      ],
+      "label": "n28 (PCC) + n1 (SCell)",
+      "component_count": 2,
+      "scell_configured": true,
+      "components": [
+        {
+          "rat": "nr",
+          "role": "pcc",
+          "band": 28,
+          "pci": 318,
+          "arfcn": 159130
+        },
+        {
+          "rat": "nr",
+          "role": "scell",
+          "band": 1,
+          "pci": 366,
+          "arfcn": 423410
+        }
+      ],
+      "scell_add_reconfigurations": 1,
+      "capture": {
+        "file": "captures/vodafone-sa/sa-n1-n28-traffic-20260821.dlf",
+        "started_at": "2026-08-21T05:34:32.531515Z",
+        "completed_at": "2026-08-21T05:35:18.816225Z",
+        "sha256": "cab6531edd713885123228e2bd3541c26d60a27f5aaf2209d8c14916d78fd808"
+      }
+    },
+    {
+      "requested_sa_bands": [
+        1,
+        78
+      ],
+      "label": "n1 (PCC) + n78 (SCell)",
+      "component_count": 2,
+      "scell_configured": true,
+      "components": [
+        {
+          "rat": "nr",
+          "role": "pcc",
+          "band": 1,
+          "pci": 431,
+          "arfcn": 423410
+        },
+        {
+          "rat": "nr",
+          "role": "scell",
+          "band": 78,
+          "pci": 512,
+          "arfcn": 643392
+        }
+      ],
+      "scell_add_reconfigurations": 1,
+      "capture": {
+        "file": "captures/vodafone-sa/sa-n1-n78-traffic-20260821.dlf",
+        "started_at": "2026-08-21T05:38:10.270186Z",
+        "completed_at": "2026-08-21T05:39:31.929391Z",
+        "sha256": "e47e1ff12241ea5bba9dcbf94d7537d6d739354021c96f90f3129ea4fbf7ef9b"
+      }
+    },
+    {
+      "requested_sa_bands": [
+        28,
+        78
+      ],
+      "label": "n28 (PCC)",
+      "component_count": 1,
+      "scell_configured": false,
+      "components": [
+        {
+          "rat": "nr",
+          "role": "pcc",
+          "band": 28,
+          "pci": 318,
+          "arfcn": 159130
+        }
+      ],
+      "scell_add_reconfigurations": 0,
+      "capture": {
+        "file": "captures/vodafone-sa/sa-n28-n78-traffic-20260821.dlf",
+        "started_at": "2026-08-21T05:41:27.031282Z",
+        "completed_at": "2026-08-21T05:42:02.495065Z",
+        "sha256": "93237d4b6540ae575367919fffe585154c8b632f8c16f7b1c08579d8bad1fae7"
+      }
+    },
+    {
+      "requested_sa_bands": [
+        1,
+        28,
+        78
+      ],
+      "label": "n28 (PCC) + n1 (SCell)",
+      "component_count": 2,
+      "scell_configured": true,
+      "components": [
+        {
+          "rat": "nr",
+          "role": "pcc",
+          "band": 28,
+          "pci": 318,
+          "arfcn": 159130
+        },
+        {
+          "rat": "nr",
+          "role": "scell",
+          "band": 1,
+          "pci": 366,
+          "arfcn": 423410
+        }
+      ],
+      "scell_add_reconfigurations": 1,
+      "capture": {
+        "file": "captures/vodafone-sa/sa-n1-n28-n78-traffic-20260821.dlf",
+        "started_at": "2026-08-21T05:45:01.561806Z",
+        "completed_at": "2026-08-21T05:45:41.197660Z",
+        "sha256": "cd1cc03cecb95e8ac077f4ec8e94b73f753196c4457a737dc9b993047543e501"
+      }
+    }
+  ],
+  "conclusion": {
+    "max_component_count": 2,
+    "validated_ca_layouts": [
+      [
+        1,
+        28
+      ],
+      [
+        1,
+        78
+      ]
+    ],
+    "non_ca_masks": [
+      [
+        28,
+        78
+      ]
+    ]
+  }
+}

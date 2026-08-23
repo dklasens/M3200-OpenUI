@@ -1,0 +1,17 @@
+[Unit]
+Description=M3200 bounded early-boot diagnostic logger
+DefaultDependencies=no
+After=data.mount
+Before=online.target
+ConditionPathIsMountPoint=/data
+
+[Service]
+Type=simple
+ExecStart=/data/m3200-openui/m3200-boot-diag.sh
+Restart=no
+TimeoutStopSec=8
+StandardOutput=null
+StandardError=null
+
+[Install]
+WantedBy=sysinit.target
