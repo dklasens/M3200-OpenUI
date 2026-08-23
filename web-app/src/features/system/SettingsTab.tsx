@@ -7,6 +7,7 @@ import { Button } from '../../ui/controls'
 import { confirm, toast, toastError } from '../../ui/feedback'
 import { Card, Row } from '../../ui/primitives'
 import UpdatesCard from './UpdatesCard'
+import PasswordCard from './PasswordCard'
 
 export default function SettingsTab({ onLogout }: { onLogout: () => void }) {
   const [device, setDevice] = useState<DeviceInfo | null>(null)
@@ -77,6 +78,8 @@ export default function SettingsTab({ onLogout }: { onLogout: () => void }) {
       </div>
 
       <UpdatesCard />
+
+      <PasswordCard />
 
       <Card title="Service controls">
         <div className="flex flex-wrap items-center gap-2">

@@ -24,6 +24,14 @@ function make(children: ReactNode) {
 }
 
 // ── Navigation ────────────────────────────────────────────────────────────────
+export const ILogo = make(
+  <>
+    <circle cx={12} cy={5.5} r={2.3} />
+    <circle cx={5} cy={18} r={2.3} />
+    <circle cx={19} cy={18} r={2.3} />
+    <path d="M10.9 7.5 6.1 16M13.1 7.5l4.8 8.5M7.3 18h9.4" />
+  </>,
+)
 export const IHome = make(
   <>
     <path d="M3 11.5 12 4l9 7.5" />

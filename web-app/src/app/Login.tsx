@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { login, setToken } from '../data/client'
-import { ISignal } from '../icons'
+import { ILogo } from '../icons'
 import { Button } from '../ui/controls'
 
 export default function Login({ onAuthed }: { onAuthed: () => void }) {
@@ -28,7 +28,7 @@ export default function Login({ onAuthed }: { onAuthed: () => void }) {
       <div className="w-full max-w-sm">
         <div className="mb-6 flex flex-col items-center text-center">
           <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-accent text-white">
-            <ISignal size={24} />
+            <ILogo size={26} strokeWidth={2.1} />
           </div>
           <h1 className="text-lg font-bold text-ink">Inseego M3200</h1>
           <p className="mt-0.5 text-[13px] text-ink2">Sign in to the dashboard</p>

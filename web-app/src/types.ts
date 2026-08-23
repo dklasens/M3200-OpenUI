@@ -418,6 +418,11 @@ export interface UpdateStatus {
   last_install?: UpdateInstallLog | null
 }
 
+export interface UpdateSettings {
+  enabled: boolean
+  interval_secs: number
+}
+
 /** One merged poll of /api/dashboard — the app's heartbeat request. */
 export interface HomeData {
   ts: number

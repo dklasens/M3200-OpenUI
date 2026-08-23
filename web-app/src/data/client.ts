@@ -86,6 +86,7 @@ export async function req(
 export const get = (path: string) => req('GET', path)
 export const post = (path: string, body?: unknown, extraHeaders?: Record<string, string>) =>
   req('POST', path, body, extraHeaders)
+export const put = (path: string, body?: unknown) => req('PUT', path, body)
 
 export async function login(password: string): Promise<{ token: string }> {
   const data = await req('POST', '/api/auth/login', { password })

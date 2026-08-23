@@ -257,6 +257,36 @@ class AuthState:
                     return True
         return False
 
+    def verify_password(self, credential):
+        if self.password_hash is None or not credential:
+            return False
+        return hmac.compare_digest(
+            self._iterated_hash(credential).encode("utf-8"),
+            self.password_hash.encode("utf-8"))
+
+    def change_password(self, current, new, keep_token=None):
+        """Returns None on success, else an error message.
+
+        All bearer sessions except `keep_token` are invalidated so other
+        devices are signed out by a change.
+        """
+        if not self.verify_password(current):
+            return "current password is incorrect"
+        if not isinstance(new, str) or len(new) < 8:
+            return "new password must be at least 8 characters"
+        if new == current:
+            return "new password must be different from the current one"
+        fd = os.open(self.password_path(),
+                     os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(new + "\n")
+        os.chmod(self.password_path(), 0o600)
+        with self.lock:
+            self.password_hash = self._iterated_hash(new)
+            self.tokens = [t for t in self.tokens
+                           if t["value"] == keep_token]
+        return None
+
 
 def get_auth():
     global AUTH
@@ -1463,6 +1493,7 @@ def schedule_system_command(argv, delay=1.0):
 # scripts/check-api-contract.py enforces this against web-app/src/data/api.ts.
 ROUTES = [
     ("POST", "/api/auth/login"),
+    ("POST", "/api/auth/password"),
     ("GET", "/api/health"),
     ("GET", "/api/dashboard"),
     ("GET", "/api/signal"),
@@ -1493,6 +1524,8 @@ ROUTES = [
     ("GET", "/api/update/status"),
     ("POST", "/api/update/check"),
     ("POST", "/api/update/install"),
+    ("GET", "/api/update/settings"),
+    ("PUT", "/api/update/settings"),
 ]
 
 OPEN_ROUTES = {"/api/health", "/api/auth/login"}
@@ -1640,6 +1673,34 @@ class Handler(BaseHTTPRequestHandler):
                 return self._ok(dict(update.status(AGENT_DIR),
                                      current_version=update.current_version(
                                          AGENT_DIR)))
+            if path == "/api/update/settings":
+                return self._ok(update.load_settings(AGENT_DIR))
+            return self._err(404, "no such endpoint")
+        except (ValueError, qmi.QmiError) as e:
+            return self._err(400, str(e))
+        except Exception as e:
+            return self._err(500, str(e))
+
+    def do_PUT(self):
+        path = self._api_path()
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = 0
+        self.raw_body = self.rfile.read(length) if length > 0 else b""
+        if not path.startswith("/api") or not self._known("PUT", path):
+            return self._err(404, "no such endpoint")
+        auth_error = self.require_auth()
+        if auth_error:
+            code, message = auth_error
+            return self._err(code, message)
+        try:
+            if path == "/api/update/settings":
+                body = self._read_json()
+                settings = update.save_settings(
+                    AGENT_DIR, enabled=body.get("enabled"),
+                    interval_secs=body.get("interval_secs"))
+                return self._ok(settings)
             return self._err(404, "no such endpoint")
         except (ValueError, qmi.QmiError) as e:
             return self._err(400, str(e))
@@ -1660,6 +1721,19 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/auth/login":
                 return self.handle_login()
+            if path == "/api/auth/password":
+                auth_error = self.require_auth()
+                if auth_error:
+                    code, message = auth_error
+                    return self._err(code, message)
+                body = self._read_json()
+                error = get_auth().change_password(
+                    body.get("current_password", ""),
+                    body.get("new_password", ""),
+                    keep_token=self.bearer_token())
+                if error:
+                    return self._err(400, error)
+                return self._ok({"changed": True})
             if path in WRITE_ROUTES:
                 auth_error = self.write_auth_error()
                 if auth_error:
@@ -1772,6 +1846,7 @@ def main():
 
     ensure_write_token()
     get_auth()
+    update.start_scheduler(AGENT_DIR)
     # Fail fast at startup so systemd restarts us if QRTR isn't ready yet.
     get_modem()
     print(f"m3200-openui agent on http://{args.host}:{args.port}", flush=True)

@@ -207,6 +207,32 @@ class InstallTests(unittest.TestCase):
         self.assertIn("older", log["message"])
 
 
+class SettingsTests(unittest.TestCase):
+    def test_defaults_save_and_validation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = update.load_settings(tmp)
+            self.assertTrue(settings["enabled"])
+            self.assertEqual(settings["interval_secs"], 604800)
+
+            update.save_settings(tmp, enabled=False, interval_secs=86400)
+            settings = update.load_settings(tmp)
+            self.assertFalse(settings["enabled"])
+            self.assertEqual(settings["interval_secs"], 86400)
+
+            with self.assertRaises(ValueError):
+                update.save_settings(tmp, interval_secs=10)
+            with self.assertRaises(ValueError):
+                update.save_settings(tmp, enabled="yes")
+
+    def test_check_due(self):
+        on = {"enabled": True, "interval_secs": 100}
+        self.assertTrue(update.check_due(on, None, 1))
+        self.assertFalse(update.check_due(on, 50, 100))
+        self.assertTrue(update.check_due(on, 50, 151))
+        off = {"enabled": False, "interval_secs": 100}
+        self.assertFalse(update.check_due(off, None, 1))
+
+
 def base(server):
     return "http://127.0.0.1:%d" % server.server_port
 

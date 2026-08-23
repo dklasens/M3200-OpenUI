@@ -36,6 +36,7 @@ STATE = {
     },
     "logger": {"running": False, "samples": 0, "started": 0,
                "duration": 3600, "interval": 3},
+    "update_settings": {"enabled": True, "interval_secs": 604800},
     "bytes_rx": 117_100_577,
     "bytes_tx": 17_028_399,
     "conn_started": BOOT - 201,
@@ -353,6 +354,7 @@ ROUTES_GET = {
         }},
         "last_install": None,
     },
+    "/api/update/settings": lambda: dict(STATE["update_settings"]),
 }
 
 ROUTES_POST = {
@@ -405,6 +407,25 @@ ROUTES_POST = {
         "last_install": {"started": time.time(), "finished": time.time(),
                          "ok": True, "message": "mock install", "steps": []},
     },
+    "/api/auth/password": lambda body: {"changed": True},
+}
+
+
+def put_update_settings(body):
+    body = body or {}
+    if isinstance(body.get("enabled"), bool):
+        STATE["update_settings"]["enabled"] = body["enabled"]
+    try:
+        interval = int(body.get("interval_secs", 0))
+        if 3600 <= interval <= 2592000:
+            STATE["update_settings"]["interval_secs"] = interval
+    except (TypeError, ValueError):
+        pass
+    return dict(STATE["update_settings"])
+
+
+ROUTES_PUT = {
+    "/api/update/settings": put_update_settings,
 }
 
 
@@ -412,7 +433,7 @@ class Handler(BaseHTTPRequestHandler):
     def _cors(self):
         origin = self.headers.get("Origin", "*")
         self.send_header("Access-Control-Allow-Origin", origin)
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Confirm, X-M3200-Confirm")
         self.send_header("Access-Control-Max-Age", "86400")
 
@@ -459,6 +480,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._send({"ok": True,
                                "data": {"token": "demo-token", "expires_in": 3600}})
         fn = ROUTES_POST.get(path)
+        if fn:
+            return self._send({"ok": True, "data": fn(body)})
+        return self._send({"ok": False, "error": "no such endpoint"}, 404)
+
+    def do_PUT(self):
+        path = self.path.split("?")[0]
+        body = self._body()
+        fn = ROUTES_PUT.get(path)
         if fn:
             return self._send({"ok": True, "data": fn(body)})
         return self._send({"ok": False, "error": "no such endpoint"}, 404)

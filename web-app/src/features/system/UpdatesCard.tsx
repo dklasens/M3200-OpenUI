@@ -3,15 +3,25 @@ import { api } from '../../data/api'
 import { usePoll } from '../../data/poll'
 import { formatBytes } from '../../format'
 import { IRefresh, IShield } from '../../icons'
-import { Button } from '../../ui/controls'
+import { Button, Select, Toggle } from '../../ui/controls'
 import { confirm, toast, toastError } from '../../ui/feedback'
 import { Card, Chip, Row } from '../../ui/primitives'
 
+const INTERVAL_OPTS = [
+  { value: 3600, label: 'Hourly' },
+  { value: 86400, label: 'Daily' },
+  { value: 604800, label: 'Weekly' },
+  { value: 2592000, label: 'Monthly' },
+]
+
 export default function UpdatesCard() {
   const status = usePoll('update-status', api.updateStatus, 10000)
+  const settings = usePoll('update-settings', api.updateSettings, 30000)
   const [checking, setChecking] = useState(false)
   const [installing, setInstalling] = useState(false)
+  const [settingsBusy, setSettingsBusy] = useState(false)
   const data = status.data
+  const auto = settings.data
   const check = data?.last_check?.result ?? null
   const install = data?.last_install ?? null
   const busy = data?.busy ?? false
@@ -73,6 +83,18 @@ export default function UpdatesCard() {
     }
   }
 
+  async function setAuto(enabled?: boolean, interval_secs?: number) {
+    setSettingsBusy(true)
+    try {
+      await api.updateSettingsSet({ enabled, interval_secs })
+      settings.refresh()
+    } catch (e) {
+      toastError(e, 'Failed to save update settings')
+    } finally {
+      setSettingsBusy(false)
+    }
+  }
+
   const offer = check && (check.update_available || check.same_version) ? check : null
 
   return (
@@ -90,6 +112,12 @@ export default function UpdatesCard() {
         <Row
           label="Last check"
           value={new Date(data.last_check.ts * 1000).toLocaleString()}
+        />
+      )}
+      {install?.finished != null && (
+        <Row
+          label="Last update applied"
+          value={new Date(install.finished * 1000).toLocaleString()}
         />
       )}
 
@@ -138,6 +166,41 @@ export default function UpdatesCard() {
           </div>
         </div>
       )}
+
+      <div className="mt-4 space-y-3 border-t border-line/8 pt-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[13px] font-semibold text-ink">Automatic checks</p>
+            <p className="text-[12px] text-ink2">
+              The agent checks GitHub for new releases on a schedule. Installing
+              always stays manual.
+            </p>
+          </div>
+          <Toggle
+            checked={auto?.enabled ?? true}
+            disabled={settingsBusy}
+            onChange={(next) => setAuto(next, undefined)}
+            label="Automatic update checks"
+          />
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-[13px] font-medium text-ink2">Check interval</p>
+          <div className="w-32">
+            <Select
+              value={String(auto?.interval_secs ?? 604800)}
+              disabled={settingsBusy || !(auto?.enabled ?? true)}
+              onChange={(e) => setAuto(undefined, Number(e.target.value))}
+              aria-label="Update check interval"
+            >
+              {INTERVAL_OPTS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+        </div>
+      </div>
     </Card>
   )
 }

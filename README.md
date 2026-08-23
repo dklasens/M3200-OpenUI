@@ -1,105 +1,76 @@
-# Inseego M3200 Root Exploit
+# M3200-OpenUI
 
-A single-file exploit that takes the **Inseego M3200** (Telstra 5G Wi-Fi Pro / MiFi Pro X) from web-admin access to **persistent root SSH** — no physical teardown, survives reboots.
+Open up the **Inseego M3200** (Telstra 5G Wi-Fi Pro / MiFi Pro X): a one-shot **root exploit**, an on-device **agent** exposing the modem over a JSON API, and a modern **web dashboard** replacing the stock UI with real telemetry and advanced controls (band selection, carrier aggregation, SMS, clients, thermals…).
 
-Tested against firmware `THN-1.33.1.1-5.4-2.526.1.1-144.1.2-144.1.2` (do not update the device — updates patch this).
+Tested against firmware `THN-1.33.1.1-5.4-2.526.1.1-144.1.2-144.1.2`.
 
-## Quick start
+> ⚠️ **Do not accept firmware updates** on a device you want to keep open — updates patch the exploit chain.
+
+| Component | What it is |
+|---|---|
+| [exploit.py](exploit.py) | Single-file Python tool: web-admin access → **persistent root SSH**, survives reboots. Prerequisite for everything else. |
+| [agent/](agent/) | Stdlib-only Python daemon running as a systemd service on the device (`/data/m3200-openui/`). Talks QMI/QRTR straight to the modem; serves a bearer-token JSON API (~30 routes) plus the built dashboard on port 8080. |
+| [web-app/](web-app/) | React 19 + Vite + Tailwind dashboard at `http://192.168.1.1:8080/`. Live signal/carrier telemetry, guarded band locks, CA capability views, Wi-Fi/SMS/client status, battery/thermal/CPU. |
+
+Also in the repo: `scripts/deploy.ps1` (one-command deployment), `scripts/qmi.py` + DIAG/RRC helpers for protocol research, `tests/`, and [`device.md`](device.md) — the full reverse-engineering reference (read it first for anything deep). [`currentstate.md`](currentstate.md) tracks what works today.
+
+## 1. Run the root exploit
 
 ```bash
 pip install requests paramiko cryptography
 python exploit.py                 # prompts for the device's web admin password
 ```
 
-Defaults to `192.168.1.1` over the USB-C tether. Options:
+Defaults to `192.168.1.1` over the USB-C tether; takes 5–10 minutes. Useful options:
 
 ```
--t, --target IP          device address (default 192.168.1.1)
--p, --password PW        web admin password (else prompt / $M3200_ADMIN_PASSWORD)
---root-password PW       root SSH password to set (default: generated, printed at the end)
---pubkey FILE            your public key to install (see key-type note below)
---http-port / --vpn-port local server ports (default 8000 / 1194)
---attempts N             full-chain retries (default 2)
---force                  re-run even if root SSH already answers
+-t IP                device address (default 192.168.1.1)
+-p PW                web admin password (else prompt / $M3200_ADMIN_PASSWORD)
+--root-password PW   root SSH password to set (default: generated, printed at the end)
+--pubkey FILE        your ECDSA public key to install
+--force              re-run even if root SSH already answers
 ```
 
-At the end you get:
+When it finishes:
 
 ```
 ssh root@192.168.1.1                    # password you chose / was generated
 ssh -i artifacts/id_ecdsa -o HostKeyAlgorithms=+ssh-rsa root@192.168.1.1
 ```
 
-Runtime is typically 5–10 minutes; the device is slow to launch its VPN client.
+**How it works:** an admin-uploaded `.ovpn` profile can smuggle a `tls-verify` directive past the validator; the device's OpenVPN client runs it **as root** during the handshake (original M2000 finding by WetFart1337 / Geofferey / ph1048, [XDA thread 4711646](https://xdaforums.com/t/root-inseego-mifi-2000-5g-hotspot.4711646/)). The exploit plays fake OpenVPN server so the hook fires; the payload installs your SSH key, sets the root password, and re-enables dropbear logins. The rootfs is writable ubifs, so changes persist across reboots.
 
-## How it works
+Notes: user keys must be **ECDSA** (no RSA-SHA2/ed25519 in this dropbear), host key is ssh-rsa, there's no SFTP (use `ssh root@IP "cat > /path" < file`). Re-running on a rooted device is detected and skipped unless `--force`; each run replaces `authorized_keys` and clears any VPN profile.
 
-1. **Web login** — the UI authenticates with `sha1(password + gSecureToken)`.
-2. **Command injection** — the VPN settings page lets an admin upload an `.ovpn` profile. The device's `validate_openvpn_configuration` allowlist can be bypassed with a TAB-prefixed, quoted line, so a profile can carry:
-   ```
-   <TAB>tls-verify "/bin/sh -c 'echo XXX_START_XXX;CMD; echo XXX_END_XXX; exit 255'"
-   ```
-   The device's OpenVPN 2.4.9 client executes `tls-verify` commands as **root** during the TLS handshake (credit: WetFart1337 / Geofferey / ph1048, XDA thread 4711646, originally for the Inseego M2000).
-3. **Fake OpenVPN server** — the exploit runs a minimal OpenVPN server locally (UDP 1194, TLS 1.2 via `ssl.MemoryBIO`) purely so the client completes a handshake and the `tls-verify` hook fires. `exit 255` aborts the handshake afterwards so OpenVPN never retries the script.
-4. **Fetch-and-run** — the injected line is kept short and quote-free (anything else trips the validator), so it just downloads `s.sh` from the exploit's HTTP server and runs it. The setup script:
-   - installs your public key in `/home/root/.ssh/authorized_keys`
-   - sets the root password
-   - removes the `-w`/`-s` flags from `/etc/default/dropbear` (root + password logins were disabled; dropbear is systemd socket-activated on this device and re-reads that file on every new connection, so the change applies immediately)
-5. **Verify** — the exploit confirms root SSH, then clears the VPN profile it created.
+If stage 1 fails with "EMPTY setup script", the usual culprit on Windows is the tether adapter's network profile being **Public** (inbound UDP 1194/TCP 8000 silently dropped) — set it Private, allow Python through the firewall, retry.
 
-The root filesystem is writable ubifs, so all changes **persist across reboots**.
+## 2. Deploy the agent + dashboard
 
-## Device quirks worth knowing
+With root SSH working, from a machine with Node.js (^20.19 or ≥22.12):
 
-- **User keys must be ECDSA.** This dropbear build rejects SHA-1-signed RSA keys (offers no rsa-sha2) and has no ed25519 support. The exploit generates an ECDSA P-256 key by default; if you pass `--pubkey`, pass an ECDSA one.
-- **Host key is ssh-rsa**, so OpenSSH ≥ 8.8 clients need `-o HostKeyAlgorithms=+ssh-rsa` (paramiko-based tools don't).
-- **No SFTP subsystem** — push files with `ssh root@IP "cat > /path" < localfile`.
-- A web-UI "restart" page exists but doesn't actually reboot; use `systemctl reboot` once you have root.
+```powershell
+pwsh scripts/deploy.ps1                  # build dashboard + push everything
+pwsh scripts/deploy.ps1 -SkipWebBuild    # reuse an existing web-app/dist build
+```
 
-## Troubleshooting
+The script builds the SPA, pushes agent + dashboard to `/data/m3200-openui/`, installs and restarts the `m3200-agent` systemd service, health-checks `/api/health`, then prints your credentials. Sign in at:
 
-| Symptom | Cause / fix |
-|---|---|
-| Stage 1 fails with "device fetched an EMPTY setup script", or openvpn logs reach `UDPv4 link remote` but never `TLS: Initial packet` | The device can't connect back to your PC. **#1 cause on Windows: the adapter's network profile is "Public"** (inbound UDP 1194 / TCP 8000 silently dropped). Set it to Private, allow Python through the firewall, re-run. |
-| `cannot reach http://192.168.1.1` | USB-C tether not up; check the adapter / replug. |
-| Login fails | Wrong web admin password (the one for the device's web page, not Wi-Fi). |
-| Long stall at "uploading payload" | Normal — the device takes 1–4 minutes per cycle to launch openvpn. The exploit auto-recovers the VPN state machine between attempts. |
-| Re-running on a rooted device | Detected automatically and skipped; use `--force` to re-run. |
+```
+http://192.168.1.1:8080/
+```
 
-Notes: the exploit **clears any VPN profile** configured on the device, and each run rewrites `/home/root/.ssh/authorized_keys` with the key you specified.
+The dashboard password is generated on first deploy (root-only file `/data/m3200-openui/agent-password`). Auth is bearer-token based (sliding 1 h expiry, per-IP lockout); band writes additionally require an explicit confirm header sent automatically by the GUI. Re-running the script is the supported update path.
 
-## Updates (OTA from GitHub)
+## Development (no device required)
 
-The device can update itself from published releases of this repo
-(`dklasens/M3200-OpenUI`):
+```bash
+cd web-app && bash tools/demo.sh     # fixture mock agent (:9090) + dashboard preview (:8080), login "demo"
+python -m unittest discover tests    # agent unit tests
+python scripts/check-api-contract.py # agent <-> dashboard <-> mock route lockstep check
+```
 
-- **Cutting a release**: push a `v*` tag. `.github/workflows/release.yml`
-  builds the dashboard, packages `www/` + agent + service unit + optional
-  `apply.sh` into `m3200-openui-<tag>.tar.gz`, publishes `manifest.json`
-  (version, asset name, sha256, size) and creates the GitHub release
-  (prerelease when the tag has a `-`, e.g. `v0.2-beta`).
-- **Checking**: dashboard *System → Updates* ("Check for updates"), or
-  `POST /api/update/check`. The agent reads the newest non-draft release's
-  `manifest.json` and compares versions (prerelease-aware).
-- **Installing**: the dashboard offers the update with release notes; install
-  requires the login session plus `X-Confirm: true`. The agent downloads the
-  tarball with curl, verifies sha256 + size, extracts with path-traversal and
-  symlink guards, `py_compile`s the staged agent (preflight), backs the running
-  agent up to `*.prev`, applies files, runs `apply.sh` as root if present,
-  reloads systemd and restarts itself. Progress/result survive the restart in
-  `update/state.json`.
-- **Device-side changes with a release**: edit `apply.sh` (run as root after
-  the files land, before the restart) — e.g. the guarded EFS toggle that
-  enables/disables 5G SA. A non-zero exit is reported as a failed install.
+## Legal & credits
 
-Verified live: a device on `0.2-beta` detected `v0.2.1`, installed it over the
-air and came back at `0.2.1` with `ok=true`.
+For use on hardware **you own** (security research, custom firmware/UI work); unauthorized access to someone else's device is illegal in most jurisdictions.
 
-## Legal
-
-For use on hardware you own (security research, custom firmware/UI work). Unauthorized access to someone else's device is illegal in most jurisdictions.
-
-## Credits
-
-- Original M2000 `tls-verify` injection: WetFart1337, Geofferey, ph1048 — [XDA thread 4711646](https://xdaforums.com/t/root-inseego-mifi-2000-5g-hotspot.4711646/)
-- This packaged tooling (single-file runner, fake OpenVPN server, dropbear/ECDSA quirks, systemd findings) was developed against the Telstra M3200.
+Dashboard design ported from the MU5250 OpenUI project; the exploit technique is credited above, and the device-side Python QMI/QRTR stack was developed against the Telstra M3200.

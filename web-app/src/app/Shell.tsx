@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import { Suspense, useEffect, useState, type ReactNode } from 'react'
 import { useAlerts } from './HomeContext'
-import { IGauge, IGlobe, IHome, ISignal, ISim, IX, IMoon, ISun } from '../icons'
+import { IGauge, IGlobe, IHome, ISignal, ISim, IX, IMoon, ISun, ILogo } from '../icons'
 import { Spinner } from '../ui/primitives'
 
 export type Group = 'home' | 'signal' | 'network' | 'modem' | 'system'
@@ -86,7 +86,7 @@ export default function Shell({
       <aside className="hidden w-56 shrink-0 flex-col border-r border-line/8 bg-surface lg:flex">
         <div className="flex items-center gap-2.5 px-5 pb-5 pt-6">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-white">
-            <ISignal size={17} />
+            <ILogo size={19} strokeWidth={2.1} />
           </div>
           <div className="min-w-0">
             <p className="truncate text-[13px] font-bold text-ink">Inseego M3200</p>

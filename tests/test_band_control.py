@@ -287,6 +287,27 @@ class AuthStateTests(unittest.TestCase):
             self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
         self.assertIsNotNone(fresh.password_hash)
 
+    def test_change_password_validates_and_rotates(self):
+        self.assertEqual(
+            self.auth.change_password("wrong", "newpassword1"),
+            "current password is incorrect")
+        self.assertEqual(
+            self.auth.change_password(self.PASSWORD, "short"),
+            "new password must be at least 8 characters")
+        self.assertEqual(
+            self.auth.change_password(self.PASSWORD, self.PASSWORD),
+            "new password must be different from the current one")
+
+        _, kept = self.login()
+        self.assertIsNone(self.auth.change_password(
+            self.PASSWORD, "fresh-secret-9", keep_token=kept))
+
+        # Old credential is rejected, the new one works, and every session
+        # except the kept token was signed out.
+        self.assertEqual(self.login(password=self.PASSWORD)[0], "invalid")
+        self.assertEqual(self.login(password="fresh-secret-9")[0], "ok")
+        self.assertTrue(self.auth.validate(kept))
+
 
 class SmsPduTests(unittest.TestCase):
     HEADER = "00040B919471060739F400"  # no SMSC, deliver, +49176070934
@@ -642,6 +663,48 @@ class AgentHttpTests(unittest.TestCase):
         self.assertEqual(result["active"]["components"][0]["role"], "sa")
 
     # -- routes table -----------------------------------------------------------
+
+    def test_password_change_over_http(self):
+        token = self.login()
+        other = self.login()  # a second session that must be signed out
+        body = {"current_password": self.PASSWORD,
+                "new_password": "brand-new-secret-1"}
+        status, _ = self.post("/api/auth/password", body)
+        self.assertEqual(status, 401)
+
+        status, payload = self.post("/api/auth/password", body, bearer=token)
+        self.assertEqual(status, 200, payload)
+
+        status, _ = self.post("/api/auth/login", {"password": self.PASSWORD})
+        self.assertEqual(status, 401)
+        # The other session is invalidated; the changing session survives.
+        status, _ = self.get("/api/bands", bearer=other)
+        self.assertEqual(status, 401)
+        status, _ = self.get("/api/bands", bearer=token)
+        self.assertEqual(status, 200)
+        self.login("brand-new-secret-1")
+
+    def test_update_settings_roundtrip(self):
+        token = self.login()
+        status, payload = self.get("/api/update/settings", bearer=token)
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["data"]["enabled"])
+        self.assertEqual(payload["data"]["interval_secs"], 604800)
+
+        status, _ = self.request("PUT", "/api/update/settings",
+                                 body={"enabled": True})
+        self.assertEqual(status, 401)
+
+        status, payload = self.request(
+            "PUT", "/api/update/settings",
+            body={"enabled": False, "interval_secs": 86400}, bearer=token)
+        self.assertEqual(status, 200, payload)
+        self.assertFalse(payload["data"]["enabled"])
+        self.assertEqual(payload["data"]["interval_secs"], 86400)
+
+        status, _ = self.request("PUT", "/api/update/settings",
+                                 body={"interval_secs": 5}, bearer=token)
+        self.assertEqual(status, 400)
 
     def test_network_and_modem_read_endpoints(self):
         token = self.login()

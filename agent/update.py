@@ -378,3 +378,86 @@ def status(agent_dir=None):
             "last_check": STATE["last_check"],
             "last_install": STATE["last_install"],
         }
+
+
+# ----------------------------------------------------------------------
+# automatic update checks
+# ----------------------------------------------------------------------
+
+DEFAULT_SETTINGS = {"enabled": True, "interval_secs": 7 * 86400}  # weekly
+MIN_INTERVAL = 3600
+MAX_INTERVAL = 30 * 86400
+WAKE = threading.Event()
+SCHEDULER = {"thread": None}
+
+
+def settings_path(agent_dir):
+    return os.path.join(update_dir(agent_dir), "settings.json")
+
+
+def load_settings(agent_dir):
+    settings = dict(DEFAULT_SETTINGS)
+    try:
+        with open(settings_path(agent_dir), "r", encoding="utf-8") as f:
+            saved = json.load(f)
+        if isinstance(saved.get("enabled"), bool):
+            settings["enabled"] = saved["enabled"]
+        interval = int(saved.get("interval_secs", 0))
+        if MIN_INTERVAL <= interval <= MAX_INTERVAL:
+            settings["interval_secs"] = interval
+    except (OSError, ValueError):
+        pass
+    return settings
+
+
+def save_settings(agent_dir, enabled=None, interval_secs=None):
+    settings = load_settings(agent_dir)
+    if enabled is not None:
+        if not isinstance(enabled, bool):
+            raise ValueError("enabled must be a boolean")
+        settings["enabled"] = enabled
+    if interval_secs is not None:
+        interval = int(interval_secs)
+        if not MIN_INTERVAL <= interval <= MAX_INTERVAL:
+            raise ValueError("interval_secs must be between %s and %s"
+                             % (MIN_INTERVAL, MAX_INTERVAL))
+        settings["interval_secs"] = interval
+    os.makedirs(update_dir(agent_dir), exist_ok=True)
+    temporary = settings_path(agent_dir) + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=1)
+    os.replace(temporary, settings_path(agent_dir))
+    WAKE.set()
+    return settings
+
+
+def check_due(settings, last_check_ts, now):
+    return bool(settings.get("enabled")) and (
+        last_check_ts is None or now - last_check_ts >= settings["interval_secs"])
+
+
+def scheduler_loop(agent_dir):
+    while True:
+        try:
+            settings = load_settings(agent_dir)
+            with STATE_LOCK:
+                last = (STATE["last_check"] or {}).get("ts")
+                busy = STATE["busy"]
+            if not busy and check_due(settings, last, time.time()):
+                try:
+                    check(agent_dir)
+                except Exception:
+                    pass  # offline / rate-limited: retry on the next wake
+        except Exception:
+            pass
+        WAKE.wait(60)
+        WAKE.clear()
+
+
+def start_scheduler(agent_dir):
+    if SCHEDULER["thread"] and SCHEDULER["thread"].is_alive():
+        return
+    thread = threading.Thread(target=scheduler_loop, args=(agent_dir,),
+                              daemon=True)
+    thread.start()
+    SCHEDULER["thread"] = thread

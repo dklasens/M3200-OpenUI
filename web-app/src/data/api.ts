@@ -4,7 +4,7 @@
 // vendor netinfo blobs). The route surface below must stay in lockstep with
 // the agent's ROUTES table — scripts/check-api-contract.py enforces it.
 
-import { get, post } from './client'
+import { get, post, put } from './client'
 import type {
   AtSendResult,
   ApnResult,
@@ -31,6 +31,7 @@ import type {
   SystemInfo,
   ThermalInfo,
   UpdateCheckResult,
+  UpdateSettings,
   UpdateStatus,
   WifiStatus,
 } from '../types'
@@ -208,4 +209,12 @@ export const api = {
     post('/api/update/install', { allow_same: allowSame }, CONFIRM_DESTRUCTIVE).then(
       (d) => d as unknown as UpdateStatus,
     ),
+  updateSettings: () =>
+    get('/api/update/settings').then((d) => d as unknown as UpdateSettings),
+  updateSettingsSet: (body: Partial<UpdateSettings>) =>
+    put('/api/update/settings', body).then((d) => d as unknown as UpdateSettings),
+
+  // Auth
+  changePassword: (current_password: string, new_password: string) =>
+    post('/api/auth/password', { current_password, new_password }),
 }
