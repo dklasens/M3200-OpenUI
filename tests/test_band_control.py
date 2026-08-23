@@ -244,6 +244,8 @@ class BandDecoderTests(unittest.TestCase):
 class FakeModem:
     def __init__(self):
         self.preferences = {k: list(v) for k, v in CARRIER_PREFS.items()}
+        self.writes = []
+        self.fail_mode_once = False
 
     def band_prefs(self):
         return {k: list(v) for k, v in self.preferences.items()}
@@ -272,11 +274,20 @@ class FakeModem:
             if ((not selected and (key == "lte_bands" or not allow_empty_nr)) or
                     not set(selected).issubset(CAPABILITIES[key])):
                 raise qmi.QmiError("unsupported or empty selection")
-        if not sa and not nsa:
+        if not allow_empty_nr and not sa and not nsa:
             raise qmi.QmiError("both NR paths are empty")
+        self.writes.append(("bands", list(lte), list(sa), list(nsa)))
         self.preferences.update(
             lte_bands=list(lte), lte_bands_ext=list(lte),
             nr5g_sa_bands=list(sa), nr5g_nsa_bands=list(nsa))
+        return self.band_prefs()
+
+    def set_mode_pref(self, modes, duration="power_cycle"):
+        self.writes.append(("mode", list(modes)))
+        if self.fail_mode_once:
+            self.fail_mode_once = False
+            raise qmi.QmiError("mode write failed")
+        self.preferences["mode_pref"] = list(modes)
         return self.band_prefs()
 
     def ca_info(self):
@@ -622,6 +633,174 @@ class AgentHttpTests(unittest.TestCase):
         body["lte_bands"] = [99]
         status, _ = self.post("/api/bands/apply", body, headers=auth)
         self.assertEqual(status, 400)
+
+    # -- network mode control ------------------------------------------------
+
+    def authed(self):
+        return self.login(), dict(self.CONFIRM, Origin=self.base)
+
+    def test_bands_reports_derived_current_mode(self):
+        token = self.login()
+        status, payload = self.get("/api/bands", bearer=token)
+        self.assertEqual(status, 200)
+        # CARRIER_PREFS: lte+nr5g with both NR paths populated -> auto.
+        self.assertEqual(payload["data"]["control"]["current_mode"], "auto")
+
+        cases = [
+            ({"mode_pref": ["lte"]}, "lte"),
+            ({"mode_pref": ["nr5g"]}, "sa"),
+            ({"nr5g_sa_bands": []}, "nsa"),
+            ({"nr5g_nsa_bands": []}, "custom"),
+            ({"nr5g_sa_bands": [], "nr5g_nsa_bands": []}, "custom"),
+        ]
+        for overrides, expected in cases:
+            preferences = {k: list(v) for k, v in CARRIER_PREFS.items()}
+            preferences.update(overrides)
+            self.assertEqual(
+                agent.derive_network_mode(preferences), expected, overrides)
+
+    def test_apply_lte_only_keeps_nr_masks_inert(self):
+        token, headers = self.authed()
+        body = self.all_selection()
+        body["mode"] = "lte"
+        status, payload = self.post(
+            "/api/bands/apply", body, bearer=token, headers=headers)
+        self.assertEqual(status, 200, payload)
+        data = payload["data"]
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["mode"], "lte")
+        self.assertEqual(data["mode_pref"], ["lte"])
+        self.assertEqual(self.modem.preferences["mode_pref"], ["lte"])
+        # Masks were written unchanged (they stay inert under LTE-only).
+        self.assertEqual(self.modem.preferences["nr5g_sa_bands"],
+                         CAPABILITIES["nr5g_sa_bands"])
+        # Masks are written before the RAT mode preference.
+        self.assertEqual([w[0] for w in self.modem.writes], ["bands", "mode"])
+
+    def test_apply_nsa_empties_sa_and_forces_full_lte_anchor(self):
+        token, headers = self.authed()
+        body = self.all_selection()
+        body["mode"] = "nsa"
+        body["lte_bands"] = [1, 3]  # overridden: NSA gets every LTE anchor
+        status, payload = self.post(
+            "/api/bands/apply", body, bearer=token, headers=headers)
+        self.assertEqual(status, 200, payload)
+        data = payload["data"]
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["requested"]["lte_bands"],
+                         CAPABILITIES["lte_bands"])
+        self.assertEqual(data["requested"]["nr5g_sa_bands"], [])
+        self.assertEqual(self.modem.preferences["nr5g_sa_bands"], [])
+        self.assertEqual(self.modem.preferences["mode_pref"], ["lte", "nr5g"])
+
+    def test_apply_sa_empties_nsa_and_drops_lte_mode(self):
+        token, headers = self.authed()
+        body = self.all_selection()
+        body["mode"] = "sa"
+        status, payload = self.post(
+            "/api/bands/apply", body, bearer=token, headers=headers)
+        self.assertEqual(status, 200, payload)
+        data = payload["data"]
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["requested"]["nr5g_nsa_bands"], [])
+        # The LTE mask is preserved (inert) for a later switch-back.
+        self.assertEqual(data["requested"]["lte_bands"],
+                         CAPABILITIES["lte_bands"])
+        self.assertEqual(self.modem.preferences["mode_pref"], ["nr5g"])
+
+    def test_apply_auto_restores_baseline_rat_mix(self):
+        token, headers = self.authed()
+        body = self.all_selection()
+        body["mode"] = "auto"
+        status, payload = self.post(
+            "/api/bands/apply", body, bearer=token, headers=headers)
+        self.assertEqual(status, 200, payload)
+        # The baseline captured at this first write is CARRIER_PREFS.
+        self.assertEqual(self.modem.preferences["mode_pref"],
+                         CARRIER_PREFS["mode_pref"])
+
+    def test_mode_validation_rejects_impossible_selections(self):
+        token, headers = self.authed()
+        body = self.all_selection()
+        body["mode"] = "6g"
+        status, payload = self.post(
+            "/api/bands/apply", body, bearer=token, headers=headers)
+        self.assertEqual(status, 400)
+        self.assertIn("mode", payload["error"])
+
+        for mode, empty_key in (("nsa", "nr5g_nsa_bands"),
+                                ("sa", "nr5g_sa_bands")):
+            body = self.all_selection()
+            body["mode"] = mode
+            body[empty_key] = []
+            status, payload = self.post(
+                "/api/bands/apply", body, bearer=token, headers=headers)
+            self.assertEqual(status, 400, mode)
+            self.assertIn(mode.upper(), payload["error"])
+
+        body = self.all_selection()
+        body["mode"] = "auto"
+        body["nr5g_sa_bands"] = []
+        body["nr5g_nsa_bands"] = []
+        status, payload = self.post(
+            "/api/bands/apply", body, bearer=token, headers=headers)
+        self.assertEqual(status, 400)
+
+        # LTE-only permits both NR masks empty (they become inert).
+        body = self.all_selection()
+        body["mode"] = "lte"
+        body["nr5g_sa_bands"] = []
+        body["nr5g_nsa_bands"] = []
+        status, payload = self.post(
+            "/api/bands/apply", body, bearer=token, headers=headers)
+        self.assertEqual(status, 200, payload)
+        self.assertTrue(payload["data"]["ok"])
+
+    def test_mode_write_failure_rolls_back_masks_and_mode(self):
+        token, headers = self.authed()
+        self.modem.fail_mode_once = True
+        body = self.all_selection()
+        body["mode"] = "sa"
+        status, payload = self.post(
+            "/api/bands/apply", body, bearer=token, headers=headers)
+        self.assertEqual(status, 400, payload)
+        # Rollback restored the pre-write masks and RAT mode.
+        self.assertEqual(self.modem.preferences,
+                         {k: list(v) for k, v in CARRIER_PREFS.items()})
+        writes = [w[0] for w in self.modem.writes]
+        self.assertEqual(writes, ["bands", "mode", "bands", "mode"])
+
+    def test_restore_also_restores_mode_pref(self):
+        token, headers = self.authed()
+        body = self.all_selection()
+        body["mode"] = "lte"
+        status, payload = self.post(
+            "/api/bands/apply", body, bearer=token, headers=headers)
+        self.assertEqual(status, 200, payload)
+        self.assertEqual(self.modem.preferences["mode_pref"], ["lte"])
+
+        status, payload = self.post(
+            "/api/bands/restore", {"duration": "power_cycle"},
+            bearer=token, headers=headers)
+        self.assertEqual(status, 200, payload)
+        self.assertTrue(payload["data"]["ok"])
+        self.assertEqual(self.modem.preferences["mode_pref"],
+                         CARRIER_PREFS["mode_pref"])
+
+    def test_restore_legacy_baseline_leaves_mode_untouched(self):
+        token, headers = self.authed()
+        with open(agent.band_baseline_path(), "w", encoding="utf-8") as f:
+            json.dump({"lte_bands": [1, 3], "nr5g_sa_bands": [78],
+                       "nr5g_nsa_bands": [28]}, f)
+        status, payload = self.post(
+            "/api/bands/restore", {"duration": "power_cycle"},
+            bearer=token, headers=headers)
+        self.assertEqual(status, 200, payload)
+        self.assertTrue(payload["data"]["ok"])
+        self.assertEqual(self.modem.preferences["mode_pref"],
+                         CARRIER_PREFS["mode_pref"])
+        self.assertEqual(
+            [w for w in self.modem.writes if w[0] == "mode"], [])
 
     # -- destructive system actions --------------------------------------------
 

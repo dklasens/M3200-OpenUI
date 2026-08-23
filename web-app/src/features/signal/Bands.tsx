@@ -1,12 +1,33 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../data/api'
 import { usePoll } from '../../data/poll'
-import type { BandDuration } from '../../types'
+import type { BandDuration, NetworkMode } from '../../types'
 import { confirm } from '../../ui/feedback'
-import { Button, Select } from '../../ui/controls'
+import { Button, Segmented, Select } from '../../ui/controls'
 import { Card, Chip, Skeleton } from '../../ui/primitives'
 
 type BandKind = 'lte' | 'sa' | 'nsa'
+
+const MODE_OPTIONS: { value: NetworkMode; label: string }[] = [
+  { value: 'auto', label: 'Automatic' },
+  { value: 'lte', label: '4G LTE only' },
+  { value: 'nsa', label: '5G NSA' },
+  { value: 'sa', label: '5G SA' },
+]
+
+const MODE_TITLES: Record<NetworkMode, string> = {
+  auto: 'Apply bands (automatic mode)?',
+  lte: 'Switch to 4G LTE only?',
+  nsa: 'Switch to 5G NSA?',
+  sa: 'Switch to 5G SA?',
+}
+
+const MODE_WARNINGS: Record<NetworkMode, string> = {
+  auto: '',
+  lte: ' 5G will be disabled until you switch back.',
+  nsa: ' Attaching 5G additionally requires the LTE anchor cell to support EN-DC.',
+  sa: ' If 5G SA never attaches, SA may be disabled at firmware level (nr5g_disable_mode, see device.md).',
+}
 
 function BandPicker({
   title,
@@ -15,6 +36,7 @@ function BandPicker({
   supported,
   prefix,
   nr,
+  disabled,
   onToggle,
 }: {
   title: string
@@ -23,10 +45,11 @@ function BandPicker({
   supported: number[]
   prefix: string
   nr?: boolean
+  disabled?: boolean
   onToggle: (kind: BandKind, band: number) => void
 }) {
   return (
-    <div>
+    <div className={disabled ? 'opacity-55' : undefined}>
       <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-ink2">{title}</p>
       <div className="flex flex-wrap gap-1.5">
         {supported.map((band) => {
@@ -34,7 +57,9 @@ function BandPicker({
           return (
             <label
               key={`${kind}-${band}`}
-              className={`inline-flex cursor-pointer select-none items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] font-medium transition-colors ${
+              className={`inline-flex select-none items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] font-medium transition-colors ${
+                disabled ? 'pointer-events-none' : 'cursor-pointer'
+              } ${
                 checked
                   ? nr
                     ? 'border-violet-500/40 bg-violet-500/10 text-violet-600 dark:text-violet-400'
@@ -46,6 +71,7 @@ function BandPicker({
                 type="checkbox"
                 className="accent-current"
                 checked={checked}
+                disabled={disabled}
                 onChange={() => onToggle(kind, band)}
               />
               {prefix}
@@ -62,6 +88,7 @@ export default function Bands() {
   const bands = usePoll('bands', api.bands, 30000)
   const [selected, setSelected] = useState<Record<BandKind, Set<number>> | null>(null)
   const [dirty, setDirty] = useState(false)
+  const [mode, setMode] = useState<NetworkMode>('auto')
   const [duration, setDuration] = useState<BandDuration>('power_cycle')
   const [message, setMessage] = useState<{ text: string; ok?: boolean } | null>(null)
   const [busy, setBusy] = useState(false)
@@ -82,6 +109,15 @@ export default function Bands() {
     })
   }, [prefs, dirty])
 
+  // Track the modem's derived network mode until the user overrides it.
+  useEffect(() => {
+    if (dirty) return
+    const current = control?.current_mode
+    if (current === 'auto' || current === 'lte' || current === 'nsa' || current === 'sa') {
+      setMode(current)
+    }
+  }, [control, dirty])
+
   if (!data && !bands.error) {
     return (
       <div className="space-y-3">
@@ -93,6 +129,16 @@ export default function Bands() {
   if (!data) return <p className="text-[13px] text-danger">{bands.error}</p>
 
   const sel = selected ?? { lte: new Set<number>(), sa: new Set<number>(), nsa: new Set<number>() }
+  const allLte = new Set(caps?.lte_bands_ext ?? caps?.lte_bands ?? [])
+
+  // The masks each mode will actually write.  NSA forces the full hardware
+  // LTE anchor set and empties SA; SA empties NSA and keeps LTE inert; LTE
+  // only leaves the NR masks in place (inert) so switching back is seamless.
+  const effective = {
+    lte: mode === 'nsa' ? allLte : sel.lte,
+    sa: mode === 'nsa' ? new Set<number>() : sel.sa,
+    nsa: mode === 'sa' ? new Set<number>() : sel.nsa,
+  }
 
   function toggle(kind: BandKind, band: number) {
     setSelected((prev) => {
@@ -107,6 +153,28 @@ export default function Bands() {
     })
     setDirty(true)
     setMessage({ text: 'Selection changed; not yet applied.' })
+  }
+
+  function selectMode(next: NetworkMode) {
+    setMode(next)
+    setDirty(true)
+    let note = 'Selection changed; not yet applied.'
+    // An NSA/SA lock needs at least one band on that NR path; preselect the
+    // full hardware set when the path is currently empty.
+    if ((next === 'nsa' && sel.nsa.size === 0) || (next === 'sa' && sel.sa.size === 0)) {
+      const fill = next === 'nsa' ? (caps?.nr5g_nsa_bands ?? []) : (caps?.nr5g_sa_bands ?? [])
+      setSelected((prev) => {
+        const updated = {
+          lte: new Set(prev?.lte ?? []),
+          sa: new Set(prev?.sa ?? []),
+          nsa: new Set(prev?.nsa ?? []),
+        }
+        if (updated[next].size === 0) updated[next] = new Set(fill)
+        return updated
+      })
+      note = `No ${next.toUpperCase()} bands were selected; all hardware ${next.toUpperCase()} bands are now selected.`
+    }
+    setMessage({ text: note })
   }
 
   function preset(kind: 'current' | 'all') {
@@ -133,22 +201,38 @@ export default function Bands() {
   }
 
   async function apply() {
+    if (effective.lte.size === 0) {
+      setMessage({ text: 'Select at least one LTE band.', ok: false })
+      return
+    }
+    if (mode === 'nsa' && effective.nsa.size === 0) {
+      setMessage({ text: '5G NSA requires at least one selected NSA band.', ok: false })
+      return
+    }
+    if (mode === 'sa' && effective.sa.size === 0) {
+      setMessage({ text: '5G SA requires at least one selected SA band.', ok: false })
+      return
+    }
+    if (mode === 'auto' && effective.sa.size === 0 && effective.nsa.size === 0) {
+      setMessage({ text: 'Automatic mode needs at least one NR band on either path.', ok: false })
+      return
+    }
     const body = {
-      lte_bands: [...sel.lte].sort((a, b) => a - b),
-      nr5g_sa_bands: [...sel.sa].sort((a, b) => a - b),
-      nr5g_nsa_bands: [...sel.nsa].sort((a, b) => a - b),
+      lte_bands: [...effective.lte].sort((a, b) => a - b),
+      nr5g_sa_bands: [...effective.sa].sort((a, b) => a - b),
+      nr5g_nsa_bands: [...effective.nsa].sort((a, b) => a - b),
     }
     const ok = await confirm({
-      title: duration === 'permanent' ? 'Apply bands permanently?' : 'Apply bands until reboot?',
-      body: 'Cellular service may briefly drop while the modem re-attaches.',
+      title: MODE_TITLES[mode] + (duration === 'permanent' ? ' (permanent)' : ''),
+      body: 'Cellular service may briefly drop while the modem re-attaches.' + MODE_WARNINGS[mode],
       confirmLabel: 'Apply',
-      danger: duration === 'permanent',
+      danger: duration === 'permanent' || mode !== 'auto',
     })
     if (!ok) return
     setBusy(true)
     setMessage({ text: 'Applying and verifying…' })
     try {
-      const result = await api.bandsApply(body, duration)
+      const result = await api.bandsApply(body, duration, mode)
       setDirty(false)
       bands.refresh()
       setMessage(
@@ -166,7 +250,7 @@ export default function Bands() {
   async function restore() {
     const ok = await confirm({
       title: 'Restore original carrier bands?',
-      body: `Restores the baseline captured before the first write (${duration === 'permanent' ? 'permanently' : 'until reboot'}).`,
+      body: `Restores the baseline captured before the first write — bands and, when recorded, the network mode (${duration === 'permanent' ? 'permanently' : 'until reboot'}).`,
       confirmLabel: 'Restore',
       danger: true,
     })
@@ -192,35 +276,62 @@ export default function Bands() {
     <div className="space-y-4">
       <Card title="Allowed bands within hardware capability">
         <div className="space-y-4">
-          <div className="flex items-center justify-between text-[13px]">
-            <span className="text-ink2">Mode preference (unchanged by this control)</span>
-            <span className="font-medium text-ink">{prefs?.mode_pref?.join(', ') || '\u2014'}</span>
+          <div>
+            <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-ink2">
+              Network mode
+            </p>
+            <Segmented options={MODE_OPTIONS} value={mode} onChange={selectMode} />
+            <p className="mt-1.5 text-[12px] text-ink3">
+              Live RAT preference: {prefs?.mode_pref?.join(', ') || '—'}
+              {control?.current_mode === 'custom' && ' (custom combination)'}
+            </p>
           </div>
 
           <BandPicker
-            title="LTE"
+            title={
+              mode === 'nsa'
+                ? 'LTE — all bands (anchor for NSA)'
+                : mode === 'sa'
+                  ? 'LTE (inert in 5G SA mode)'
+                  : 'LTE'
+            }
             kind="lte"
-            selected={sel.lte}
+            selected={effective.lte}
             supported={caps?.lte_bands_ext ?? caps?.lte_bands ?? []}
             prefix="B"
+            disabled={mode === 'nsa' || mode === 'sa'}
             onToggle={toggle}
           />
           <BandPicker
-            title="NR5G SA"
+            title={
+              mode === 'nsa'
+                ? 'NR5G SA (emptied in NSA mode)'
+                : mode === 'lte'
+                  ? 'NR5G SA (inert while LTE only)'
+                  : 'NR5G SA'
+            }
             kind="sa"
-            selected={sel.sa}
+            selected={effective.sa}
             supported={caps?.nr5g_sa_bands ?? []}
             prefix="n"
             nr
+            disabled={mode === 'nsa' || mode === 'lte'}
             onToggle={toggle}
           />
           <BandPicker
-            title="NR5G NSA"
+            title={
+              mode === 'sa'
+                ? 'NR5G NSA (emptied in SA mode)'
+                : mode === 'lte'
+                  ? 'NR5G NSA (inert while LTE only)'
+                  : 'NR5G NSA'
+            }
             kind="nsa"
-            selected={sel.nsa}
+            selected={effective.nsa}
             supported={caps?.nr5g_nsa_bands ?? []}
             prefix="n"
             nr
+            disabled={mode === 'sa' || mode === 'lte'}
             onToggle={toggle}
           />
         </div>
@@ -262,8 +373,8 @@ export default function Bands() {
           </p>
         )}
         <p className="mt-2 text-[12px] text-ink3">
-          Changing bands can briefly interrupt cellular service. LTE cannot be empty, and at least
-          one NR path must remain selected.{' '}
+          Changing bands or network mode can briefly interrupt cellular service. LTE cannot be
+          empty, and automatic mode keeps at least one NR path selected.{' '}
           {control?.permanent_enabled
             ? 'Permanent writes have passed reboot verification.'
             : 'Permanent writes remain disabled pending reboot verification.'}

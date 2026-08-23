@@ -23,6 +23,7 @@ import type {
   LoggerDownload,
   LoggerStatus,
   MemInfo,
+  NetworkMode,
   NrCaValidation,
   ProcessListResult,
   SignalInfo,
@@ -163,8 +164,8 @@ export const api = {
   caValidation: () => get('/api/ca/validation').then((d) => d as unknown as NrCaValidation),
   cells: () => get('/api/cells').then((d) => d as unknown as CellsInfo),
   bands: () => get('/api/bands').then((d) => d as unknown as BandsInfo),
-  bandsApply: (selection: BandSelection, duration: BandDuration) =>
-    post('/api/bands/apply', { ...selection, duration }, CONFIRM_BANDS).then(
+  bandsApply: (selection: BandSelection, duration: BandDuration, mode?: NetworkMode) =>
+    post('/api/bands/apply', { ...selection, duration, ...(mode ? { mode } : {}) }, CONFIRM_BANDS).then(
       (d) => d as unknown as BandApplyResult,
     ),
   bandsRestore: (duration: BandDuration) =>

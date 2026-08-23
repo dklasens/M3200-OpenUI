@@ -33,6 +33,7 @@ STATE = {
         "lte_bands": [1, 3, 5, 7, 8, 20, 28],
         "nr5g_sa_bands": [5, 7, 8, 78],
         "nr5g_nsa_bands": [5, 7, 8, 78],
+        "mode_pref": ["lte", "nr5g"],
     },
     "logger": {"running": False, "samples": 0, "started": 0,
                "duration": 3600, "interval": 3},
@@ -185,6 +186,22 @@ def dashboard_batch():
     }
 
 
+def current_network_mode(prefs):
+    """Same derivation as the real agent's derive_network_mode."""
+    modes = set(prefs.get("mode_pref") or [])
+    sa = bool(prefs.get("nr5g_sa_bands"))
+    nsa = bool(prefs.get("nr5g_nsa_bands"))
+    if "nr5g" not in modes:
+        return "lte" if "lte" in modes else "custom"
+    if "lte" not in modes:
+        return "sa"
+    if nsa and not sa:
+        return "nsa"
+    if sa and nsa:
+        return "auto"
+    return "custom"
+
+
 def bands():
     return {
         "preferences": dict(STATE["preferences"]),
@@ -194,7 +211,8 @@ def bands():
             "nr5g_nsa_bands": NR_CAPS,
         },
         "control": {"write_enabled": True, "permanent_enabled": True,
-                    "baseline": STATE["baseline"]},
+                    "baseline": STATE["baseline"],
+                    "current_mode": current_network_mode(STATE["preferences"])},
     }
 
 
@@ -409,22 +427,47 @@ ROUTES_GET = {
     "/api/update/settings": lambda: dict(STATE["update_settings"]),
 }
 
-ROUTES_POST = {
-    "/api/bands/apply": lambda body: {
+def bands_apply(body):
+    """Mirror the real apply: masks first, then the named mode semantics."""
+    body = body or {}
+    mode = body.get("mode")
+    lte = sorted(body.get("lte_bands", []))
+    sa = sorted(body.get("nr5g_sa_bands", []))
+    nsa = sorted(body.get("nr5g_nsa_bands", []))
+    mode_pref = None
+    if mode == "lte":
+        mode_pref = ["lte"]
+    elif mode == "nsa":
+        lte, sa = list(LTE_CAPS), []
+        mode_pref = ["lte", "nr5g"]
+    elif mode == "sa":
+        nsa = []
+        mode_pref = ["nr5g"]
+    elif mode == "auto":
+        mode_pref = list(STATE["baseline"].get("mode_pref") or ["lte", "nr5g"])
+    prefs = STATE["preferences"]
+    prefs["lte_bands"] = prefs["lte_bands_ext"] = list(lte)
+    prefs["nr5g_sa_bands"] = list(sa)
+    prefs["nr5g_nsa_bands"] = list(nsa)
+    result = {
         "ok": True,
-        "duration": (body or {}).get("duration", "power_cycle"),
-        "requested": {
-            "lte_bands": sorted((body or {}).get("lte_bands", [])),
-            "nr5g_sa_bands": sorted((body or {}).get("nr5g_sa_bands", [])),
-            "nr5g_nsa_bands": sorted((body or {}).get("nr5g_nsa_bands", [])),
-        },
-        "actual": {
-            "lte_bands": sorted((body or {}).get("lte_bands", [])),
-            "nr5g_sa_bands": sorted((body or {}).get("nr5g_sa_bands", [])),
-            "nr5g_nsa_bands": sorted((body or {}).get("nr5g_nsa_bands", [])),
-        },
+        "duration": body.get("duration", "power_cycle"),
+        "requested": {"lte_bands": lte, "nr5g_sa_bands": sa,
+                      "nr5g_nsa_bands": nsa},
+        "actual": {"lte_bands": lte, "nr5g_sa_bands": sa,
+                   "nr5g_nsa_bands": nsa},
         "baseline": STATE["baseline"],
-    },
+    }
+    if mode_pref is not None:
+        prefs["mode_pref"] = list(mode_pref)
+        result["mode_pref"] = mode_pref
+        if mode:
+            result["mode"] = mode
+    return result
+
+
+ROUTES_POST = {
+    "/api/bands/apply": bands_apply,
     "/api/bands/restore": lambda body: {
         "ok": True,
         "duration": (body or {}).get("duration", "power_cycle"),

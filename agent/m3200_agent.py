@@ -77,6 +77,11 @@ STOCK_KEEP_FIELDS = (
     "statusBarEthernetPortEnabled",
 )
 
+# Named network modes accepted by /api/bands/apply.  There is no QMI NSA
+# mode bit: NSA vs SA is isolated through the independent NR band masks,
+# and the RAT mode preference carries only the generic "nr5g" bit.
+NETWORK_MODES = ("auto", "lte", "nsa", "sa")
+
 THERMAL_ZONES = (
     ("cpu", "cpuss-0-step"),
     ("modem", "mdmss-0-step"),
@@ -536,6 +541,26 @@ def read_write_token():
         return ""
 
 
+def derive_network_mode(preferences):
+    """Best-effort label for the current mask/mode combination.
+
+    One of "auto", "lte", "nsa", "sa", or "custom" for combinations the
+    mode control itself would never write (e.g. LTE anchor + SA only).
+    """
+    modes = set(preferences.get("mode_pref") or [])
+    sa = bool(preferences.get("nr5g_sa_bands"))
+    nsa = bool(preferences.get("nr5g_nsa_bands"))
+    if "nr5g" not in modes:
+        return "lte" if "lte" in modes else "custom"
+    if "lte" not in modes:
+        return "sa"
+    if nsa and not sa:
+        return "nsa"
+    if sa and nsa:
+        return "auto"
+    return "custom"
+
+
 def preference_snapshot(preferences, allow_empty_nr=False):
     snapshot = {
         "lte_bands": list(preferences.get("lte_bands_ext") or
@@ -548,9 +573,8 @@ def preference_snapshot(preferences, allow_empty_nr=False):
     if not allow_empty_nr and any(
             not snapshot[key] for key in ("nr5g_sa_bands", "nr5g_nsa_bands")):
         raise ValueError("cannot capture an incomplete band-preference baseline")
-    if allow_empty_nr and not (
-            snapshot["nr5g_sa_bands"] or snapshot["nr5g_nsa_bands"]):
-        raise ValueError("at least one NR path must contain a selected band")
+    # allow_empty_nr also permits both NR masks empty: that is the intended
+    # state under the LTE-only network mode, not an incomplete snapshot.
     return snapshot
 
 
@@ -563,11 +587,14 @@ def load_band_baseline():
 
 
 def save_band_baseline(preferences):
-    """Atomically preserve the pre-write carrier masks on the first write."""
+    """Atomically preserve the pre-write carrier state on the first write."""
     path = band_baseline_path()
     if os.path.exists(path):
         return load_band_baseline()
     snapshot = preference_snapshot(preferences, allow_empty_nr=True)
+    # The RAT mode preference is recorded so network-mode changes can be
+    # reverted by "restore original"; legacy baselines predate this key.
+    snapshot["mode_pref"] = list(preferences.get("mode_pref") or [])
     try:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:
@@ -578,7 +605,46 @@ def save_band_baseline(preferences):
     return snapshot
 
 
-def apply_band_preferences(selection, duration):
+def resolve_network_mode(mode, requested, capabilities, baseline):
+    """Translate a named network mode into target masks + RAT mode pref.
+
+    NSA needs the broadest LTE anchor choice, so its LTE mask is forced to
+    the full hardware capability.  SA keeps the requested LTE mask in place
+    but inert (nr5g-only RAT mode), mirroring the verified lock_sa.py flow.
+    Returns (target_selection, mode_pref).
+    """
+    target = dict(requested)
+    if mode == "lte":
+        # The RAT mode alone constrains the modem; NR masks stay inert so
+        # the previous selections are still there when NR is re-enabled.
+        return target, ["lte"]
+    if mode == "nsa":
+        if not requested["nr5g_nsa_bands"]:
+            raise ValueError("5G NSA requires at least one selected NSA band")
+        lte_caps = sorted(set(
+            capabilities.get("lte_bands_ext") or
+            capabilities.get("lte_bands") or []))
+        if not lte_caps:
+            raise ValueError("the modem did not report LTE band capabilities")
+        target["lte_bands"] = lte_caps
+        target["nr5g_sa_bands"] = []
+        return target, ["lte", "nr5g"]
+    if mode == "sa":
+        if not requested["nr5g_sa_bands"]:
+            raise ValueError("5G SA requires at least one selected SA band")
+        target["nr5g_nsa_bands"] = []
+        return target, ["nr5g"]
+    # auto: restore the baseline RAT mix when known, else LTE + NR5G.
+    if not (requested["nr5g_sa_bands"] or requested["nr5g_nsa_bands"]):
+        raise ValueError("automatic mode requires at least one selected NR band")
+    baseline_modes = (baseline or {}).get("mode_pref") or []
+    return target, (list(baseline_modes) if baseline_modes
+                    else ["lte", "nr5g"])
+
+
+def apply_band_preferences(selection, duration, mode=None):
+    if mode is not None and mode not in NETWORK_MODES:
+        raise ValueError("mode must be one of: auto, lte, nsa, sa")
     requested = {
         "lte_bands": selection.get("lte_bands"),
         "nr5g_sa_bands": selection.get("nr5g_sa_bands"),
@@ -588,40 +654,100 @@ def apply_band_preferences(selection, duration):
         raise ValueError("all three band selections must be JSON arrays")
     if not requested["lte_bands"]:
         raise ValueError("at least one LTE anchor band must be selected")
-    if not (requested["nr5g_sa_bands"] or requested["nr5g_nsa_bands"]):
-        raise ValueError("at least one NR path must contain a selected band")
     if duration not in ("power_cycle", "permanent"):
         raise ValueError("duration must be 'power_cycle' or 'permanent'")
     if duration == "permanent" and not os.path.exists(permanent_marker_path()):
         raise ValueError("permanent band writes are not enabled on this device")
 
+    explicit_modes = selection.get("mode_pref")
+    if explicit_modes is not None:
+        if (not isinstance(explicit_modes, list) or not explicit_modes or
+                not all(isinstance(m, str) for m in explicit_modes)):
+            raise ValueError("mode_pref must be a non-empty array of RAT modes")
+
+    if mode is None and explicit_modes is None and not (
+            requested["nr5g_sa_bands"] or requested["nr5g_nsa_bands"]):
+        raise ValueError("at least one NR path must contain a selected band")
+
     with BAND_WRITE_LOCK:
         current = qmi_guard(lambda modem: modem.band_prefs())
         baseline = save_band_baseline(current)
-        actual = qmi_guard(lambda modem: modem.set_band_prefs(
-            requested["lte_bands"], requested["nr5g_sa_bands"],
-            requested["nr5g_nsa_bands"], duration=duration,
-            allow_empty_nr=True))
+
+        # All validation happens before any write, so a rejected request
+        # never touches the modem or drops the QMI connection.
+        if explicit_modes is not None:
+            target, mode_pref = requested, list(explicit_modes)
+        elif mode is None:
+            target, mode_pref = requested, None
+        else:
+            caps = qmi_guard(lambda modem: modem.band_capabilities())
+            target, mode_pref = resolve_network_mode(
+                mode, requested, caps, baseline)
+
+        previous = {
+            "lte_bands": (current.get("lte_bands_ext") or
+                          current.get("lte_bands") or []),
+            "nr5g_sa_bands": current.get("nr5g_sa_bands") or [],
+            "nr5g_nsa_bands": current.get("nr5g_nsa_bands") or [],
+        }
+        previous_modes = current.get("mode_pref") or []
+
+        def _write(modem):
+            try:
+                # Masks first, then the RAT mode preference (the order
+                # proven by the controlled SA/NSA lock scripts).
+                actual = modem.set_band_prefs(
+                    target["lte_bands"], target["nr5g_sa_bands"],
+                    target["nr5g_nsa_bands"], duration=duration,
+                    allow_empty_nr=True)
+                if mode_pref is not None:
+                    actual = modem.set_mode_pref(mode_pref, duration=duration)
+            except Exception:
+                # Best-effort rollback on the same connection so a failed
+                # write cannot strand the modem on a partial combination.
+                try:
+                    modem.set_band_prefs(
+                        previous["lte_bands"], previous["nr5g_sa_bands"],
+                        previous["nr5g_nsa_bands"], duration=duration,
+                        allow_empty_nr=True)
+                    if mode_pref is not None and previous_modes:
+                        modem.set_mode_pref(previous_modes, duration=duration)
+                except Exception:
+                    pass
+                raise
+            return actual
+
+        actual = qmi_guard(_write)
 
     normalized = {
-        "lte_bands": sorted(set(requested["lte_bands"])),
-        "nr5g_sa_bands": sorted(set(requested["nr5g_sa_bands"])),
-        "nr5g_nsa_bands": sorted(set(requested["nr5g_nsa_bands"])),
+        "lte_bands": sorted(set(target["lte_bands"])),
+        "nr5g_sa_bands": sorted(set(target["nr5g_sa_bands"])),
+        "nr5g_nsa_bands": sorted(set(target["nr5g_nsa_bands"])),
     }
     actual_snapshot = preference_snapshot(actual, allow_empty_nr=True)
-    return {
-        "ok": actual_snapshot == normalized,
+    ok = actual_snapshot == normalized
+    if mode_pref is not None:
+        ok = ok and set(actual.get("mode_pref") or []) == set(mode_pref)
+    result = {
+        "ok": ok,
         "duration": duration,
         "requested": normalized,
         "actual": actual_snapshot,
         "baseline": baseline,
     }
+    if mode_pref is not None:
+        result["mode_pref"] = mode_pref
+        if mode is not None:
+            result["mode"] = mode
+    return result
 
 
 def restore_band_baseline(duration):
     baseline = load_band_baseline()
     if not baseline:
         raise ValueError("no original carrier baseline has been captured")
+    # Baselines written by this build carry mode_pref and therefore restore
+    # the RAT mode as well; older mask-only baselines leave mode untouched.
     return apply_band_preferences(baseline, duration)
 
 
@@ -1673,10 +1799,13 @@ def build_bands():
             out[key] = fn()
         except Exception as e:
             out[key] = {"error": str(e)}
+    preferences = out.get("preferences") or {}
     out["control"] = {
         "write_enabled": bool(read_write_token()),
         "permanent_enabled": os.path.exists(permanent_marker_path()),
         "baseline": load_band_baseline(),
+        "current_mode": (None if preferences.get("error")
+                         else derive_network_mode(preferences)),
     }
     return out
 
@@ -1968,7 +2097,8 @@ class Handler(BaseHTTPRequestHandler):
                 body = self._read_json()
                 duration = body.get("duration", "power_cycle")
                 if path == "/api/bands/apply":
-                    result = apply_band_preferences(body, duration)
+                    result = apply_band_preferences(
+                        body, duration, mode=body.get("mode"))
                 else:
                     result = restore_band_baseline(duration)
                 return self._ok(result, 200 if result["ok"] else 409)

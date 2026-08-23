@@ -129,10 +129,19 @@ export interface BandSelection {
   nr5g_nsa_bands: number[]
 }
 
+/** Network mode presets: auto (LTE+SA+NSA), lte (4G only), nsa, sa. */
+export type NetworkMode = 'auto' | 'lte' | 'nsa' | 'sa'
+
+export interface BandBaseline extends BandSelection {
+  mode_pref?: string[]
+}
+
 export interface BandControl {
   write_enabled?: boolean
   permanent_enabled?: boolean
-  baseline?: BandSelection | null
+  baseline?: BandBaseline | null
+  /** Derived from mode_pref + NR mask emptiness; "custom" when mixed. */
+  current_mode?: NetworkMode | 'custom' | null
 }
 
 export interface BandsInfo {
@@ -148,7 +157,9 @@ export interface BandApplyResult {
   duration: BandDuration
   requested: BandSelection
   actual: BandSelection
-  baseline: BandSelection | null
+  baseline: BandBaseline | null
+  mode?: NetworkMode
+  mode_pref?: string[]
 }
 
 // ── CA capability data ────────────────────────────────────────────────────────

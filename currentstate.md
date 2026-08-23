@@ -28,6 +28,7 @@ Last updated: 2026-08-23 (session 5). See `device.md` for the full hardware/prot
 | Vodafone NR-SA enable investigation | ✅ root cause found; n1 SA registration and data verified |
 | SA-aware live UI (mode, band, bandwidth, PCI, NR-ARFCN) | ✅ deployed and live-tested |
 | Vodafone NR-CA capability decode and controlled validation | ✅ n1+n28 and n1+n78 verified as 2CC; no 3CC advertised |
+| Network mode control (Auto / LTE only / 5G NSA / 5G SA) in Band Control | ✅ implemented + unit-tested; pending live verification |
 
 ## Repo layout
 
@@ -174,6 +175,19 @@ dashboard) and `/etc/systemd/system/m3200-agent.service`.
   while rejecting an empty LTE anchor selection or both NR paths empty. The live
   bearer-token flow was verified; a write without the confirmation header is rejected
   with HTTP 400 and an unauthenticated one with HTTP 401.
+- **Network mode control** (Automatic / 4G LTE only / 5G NSA / 5G SA) is part of the
+  same apply flow: `POST /api/bands/apply` accepts an optional `mode`. The write runs
+  masks-first then RAT mode preference (the proven lock-script order) on one QMI
+  connection, with best-effort rollback of masks+mode on failure. LTE-only sets RAT
+  mode `lte` and leaves the NR masks in place (inert); NSA empties the SA mask and
+  forces the full hardware LTE anchor set; SA empties the NSA mask and sets RAT mode
+  `nr5g` only; Automatic restores the baseline RAT mix (LTE+NR5G when no baseline
+  exists yet). The baseline file now also records `mode_pref`, so Restore original
+  reverts the RAT mode too (legacy mask-only baselines restore masks only). The
+  derived live combination is reported as `control.current_mode`
+  (`auto`/`lte`/`nsa`/`sa`/`custom`). The `nr5g_disable_mode` EFS byte is not
+  readable from Linux (no `/nv` mount) or the agent's QMI services, so the UI shows
+  a static SA hint instead of a live gate state.
 
 ## Carrier-aggregation capability state
 
