@@ -33,6 +33,7 @@ import type {
   UpdateCheckResult,
   UpdateSettings,
   UpdateStatus,
+  WifiApSettings,
   WifiStatus,
 } from '../types'
 
@@ -181,6 +182,8 @@ export const api = {
   wifiStatus: () => get('/api/wifi/status').then((d) => d as unknown as WifiStatus),
   wifiSettingsSet: (enabled: boolean) =>
     put('/api/wifi/settings', { enabled }).then((d) => d as unknown as WifiStatus),
+  wifiApSet: (body: WifiApSettings) =>
+    put('/api/wifi/ap', body).then((d) => d as unknown as WifiStatus),
   smsList: () => get('/api/sms/list').then((d) => d as unknown as SmsListResult),
   apn: () => get('/api/modem/apn').then((d) => d as unknown as ApnResult),
   top: () => get('/api/system/top').then((d) => d as unknown as ProcessListResult),

@@ -1139,9 +1139,164 @@ def wifi_status():
                                        ("channel", "Channel")):
                         if label in line:
                             current[key] = _wifi_bracket(line, label)
+        if status["enabled"]:
+            # Full per-profile detail is only readable while the AP is up.
+            try:
+                status["ap_profiles"] = wifi_get_profiles()
+            except Exception:
+                status["ap_profiles"] = []
+        else:
+            status["ap_profiles"] = []
         return status
 
     return cached("wifi", 10, fetch)
+
+
+# Wi-Fi AP profiles. The firmware models each radio/band as a profile; the
+# mode selects the radio (2.4 GHz vs 5 GHz families). Two main profiles with
+# the same SSID = combined dual-band (clients steer themselves); different
+# SSIDs = split bands. Verified live against wifi_cli read-back:
+#   set_ap_profile <idx 1-5> <status 0/1> <name> <ssid> <hidden 0/1>
+#     <wps 0/1> <privacy 0/1> <feature mask 0-31> <mode 1-14> <channel>
+#     <width 1-3> <security 0-6> <encryption 1-5> <passphrase>
+# (the usage string advertises auth/WEP fields, but for non-WEP security the
+# daemon takes the passphrase directly after the encryption type; empty args
+# are dropped by the msgbus command join, which shifts the parse)
+WIFI_MODE_ORDER = ["BGN", "BG", "B", "G", "GN", "N2", "ACN2", "A", "N5",
+                   "AN", "ACN5.", "AC5ONLY", "BGNPLUSAX", "ACNPLUSAX"]
+WIFI_MODES_2G = {"BGN", "BG", "B", "G", "GN", "N2", "ACN2", "BGNPLUSAX"}
+WIFI_MODES_5G = {"A", "N5", "AN", "ACN5.", "AC5ONLY", "ACNPLUSAX"}
+WIFI_SECURITY_NUM = {"none": 0, "wep": 1, "wpa": 2, "wpa2": 3, "wpa2mix": 4,
+                     "wpa3": 5, "wpa3transition": 6}
+WIFI_SECURITY_NAME = {"None": "none", "WEP": "wep", "WPA": "wpa",
+                      "WPA2": "wpa2", "WPA2 MIX": "wpa2mix", "WPA3": "wpa3",
+                      "WPA3 Transition": "wpa3transition"}
+WIFI_WIDTH_NUM = {20: 1, 40: 2, 80: 3}
+WIFI_MAIN_MASK = 1  # feature mask printed as [BLACKLIST, ] on stock main profiles
+
+
+def wifi_get_profiles():
+    """Read all five AP profiles. Only answers while the AP is up."""
+    profiles = []
+    for idx in range(1, 6):
+        out = wifi_cli(["get_ap_profile", str(idx)], timeout=6)
+        if not out or "success" not in out:
+            continue
+        width_raw = _wifi_bracket(out, "Channel width") or ""
+        width = None
+        for token in ("20", "40", "80"):
+            if width_raw.startswith(token):
+                width = int(token)
+        profiles.append({
+            "index": idx,
+            "status": _wifi_bracket(out, "Profile status") == "1",
+            "name": _wifi_bracket(out, "Profile name"),
+            "ssid": _wifi_bracket(out, "SSID"),
+            "hidden": _wifi_bracket(out, "Ignore broadcast SSID") == "1",
+            "privacy": _wifi_bracket(out, "Wifi privacy") == "1",
+            "wps": _wifi_bracket(out, "WPS status") == "1",
+            "mode": _wifi_bracket(out, "Mode"),
+            "channel": int(_wifi_bracket(out, "Channel") or 0),
+            "width_mhz": width,
+            "security": WIFI_SECURITY_NAME.get(
+                _wifi_bracket(out, "Security type"), "none"),
+            "encryption": _wifi_bracket(out, "Encryption type"),
+            "passphrase": _wifi_bracket(out, "WPA Pre-Shared Key"),
+        })
+    return profiles
+
+
+def wifi_main_profiles(profiles):
+    """(main_2g, main_5g): the first enabled-or-stock main profile per radio."""
+    main_2g = main_5g = None
+    for prof in profiles:
+        if prof.get("privacy"):
+            continue  # guest profiles
+        mode = prof.get("mode")
+        if mode in WIFI_MODES_2G and main_2g is None:
+            main_2g = prof
+        elif mode in WIFI_MODES_5G and main_5g is None:
+            main_5g = prof
+    return main_2g, main_5g
+
+
+def _wifi_profile_args(idx, status, ssid, hidden, mode_num, channel, width,
+                       security, passphrase, name=None):
+    if security == "none":
+        sec_num, enc_num, psk = 0, 1, ""
+    else:
+        sec_num = WIFI_SECURITY_NUM[security]
+        enc_num = 4  # AES
+        psk = passphrase
+    return [str(idx), "1" if status else "0",
+            name or ("Profile%d" % idx), ssid, "1" if hidden else "0",
+            "0", "0", str(WIFI_MAIN_MASK), str(mode_num), str(channel),
+            str(WIFI_WIDTH_NUM[width]), str(sec_num), str(enc_num), psk]
+
+
+def wifi_apply_settings(cfg):
+    """Rewrite the two main AP profiles (2.4G idx1, 5G idx2).
+
+    `combined` gives both radios the same SSID (dual-band, client-side
+    steering); otherwise the bands broadcast separate SSIDs. Requires the
+    AP to be enabled so the read-back is possible.
+    """
+    if not isinstance(cfg, dict):
+        raise ValueError("settings object required")
+    combined = bool(cfg.get("combined", True))
+    ssid = str(cfg.get("ssid") or "").strip()
+    ssid_2g = str(cfg.get("ssid_2g") or "").strip() or (ssid if not combined else None)
+    ssid_5g = str(cfg.get("ssid_5g") or "").strip() or (ssid if not combined else None)
+    if combined:
+        ssid_2g = ssid_5g = ssid
+    security = str(cfg.get("security") or "wpa3transition")
+    if security not in WIFI_SECURITY_NUM:
+        raise ValueError("unsupported security mode: %s" % security)
+    passphrase = str(cfg.get("passphrase") or "")
+    if security != "none" and not 8 <= len(passphrase) <= 63:
+        raise ValueError("passphrase must be 8-63 characters")
+    for label, value in (("ssid_2g", ssid_2g), ("ssid_5g", ssid_5g)):
+        if not 1 <= len(value) <= 32:
+            raise ValueError("%s must be 1-32 characters" % label)
+    for label, value in (("ssid_2g", ssid_2g), ("ssid_5g", ssid_5g),
+                         ("passphrase", passphrase)):
+        if " " in value:
+            raise ValueError(
+                "%s cannot contain spaces (firmware command limitation)" % label)
+
+    def channel_of(key, allowed_max):
+        raw = cfg.get(key, 0)
+        channel = int(raw)
+        if not 0 <= channel <= allowed_max:
+            raise ValueError("%s out of range" % key)
+        return channel
+
+    channel_2g = channel_of("channel_2g", 14)
+    channel_5g = channel_of("channel_5g", 165)
+    width_2g = int(cfg.get("width_2g", 20))
+    width_5g = int(cfg.get("width_5g", 80))
+    if width_2g not in (20, 40):
+        raise ValueError("2.4 GHz width must be 20 or 40 MHz")
+    if width_5g not in (20, 40, 80):
+        raise ValueError("5 GHz width must be 20, 40 or 80 MHz")
+    hidden = bool(cfg.get("hidden", False))
+
+    current = wifi_get_profiles()
+    if not current:
+        raise ValueError(
+            "Wi-Fi profiles are not readable; turn Wi-Fi on first")
+
+    args_2g = _wifi_profile_args(1, True, ssid_2g, hidden, 13, channel_2g,
+                                 width_2g, security, passphrase)
+    args_5g = _wifi_profile_args(2, True, ssid_5g, hidden, 14, channel_5g,
+                                 width_5g, security, passphrase)
+    for args in (args_2g, args_5g):
+        out = wifi_cli(["set_ap_profile"] + args, timeout=10)
+        if not out or "success" not in out:
+            raise ValueError("wifi_cli rejected profile %s" % args[0])
+    with CACHE_LOCK:
+        CACHE.pop("wifi", None)
+    return wifi_status()
 
 
 def wifi_set_enabled(enabled):
@@ -1537,6 +1692,7 @@ ROUTES = [
     ("GET", "/api/clients"),
     ("GET", "/api/wifi/status"),
     ("PUT", "/api/wifi/settings"),
+    ("PUT", "/api/wifi/ap"),
     ("GET", "/api/sms/list"),
     ("GET", "/api/modem/apn"),
     ("GET", "/api/system/top"),
@@ -1733,6 +1889,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(enabled, bool):
                     raise ValueError("'enabled' boolean is required")
                 return self._ok(wifi_set_enabled(enabled))
+            if path == "/api/wifi/ap":
+                body = self._read_json()
+                return self._ok(wifi_apply_settings(body))
             return self._err(404, "no such endpoint")
         except (ValueError, qmi.QmiError) as e:
             return self._err(400, str(e))

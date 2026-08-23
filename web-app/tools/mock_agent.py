@@ -298,6 +298,12 @@ SIGNAL_LOG_CSV = (
 
 def wifi_status():
     on = STATE["wifi_enabled"]
+    ap = STATE.setdefault("wifi_ap", {
+        "ssid_2g": "M3200-Demo", "ssid_5g": "M3200-Demo",
+        "security": "wpa3transition", "passphrase": "demo-pass-1",
+        "channel_2g": 0, "channel_5g": 44, "width_2g": 20, "width_5g": 80,
+        "hidden": False,
+    })
     return {
         "available": True, "feature_enabled": on, "enabled": on,
         "country": "AU", "ap_mode": 1 if on else 0, "max_clients": 32,
@@ -306,13 +312,40 @@ def wifi_status():
                   "ACN5.", "AC5ONLY", "BGNPLUSAX", "ACNPLUSAX"],
         "channels": {"2.4": ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"],
                      "5": ["36", "40", "44", "48", "149", "153", "157", "161"]},
-        "profiles": ([{"interface": "wlan0", "ssid": "M3200-Demo",
+        "profiles": ([{"interface": "wlan0", "ssid": ap["ssid_2g"],
                        "security": "WPA2-PSK", "channel": "44"}] if on else []),
+        "ap_profiles": ([
+            {"index": 1, "status": True, "name": "Profile1",
+             "ssid": ap["ssid_2g"], "hidden": ap["hidden"], "privacy": False,
+             "wps": False, "mode": "BGNPLUSAX", "channel": ap["channel_2g"],
+             "width_mhz": ap["width_2g"], "security": ap["security"],
+             "encryption": "AES", "passphrase": ap["passphrase"]},
+            {"index": 2, "status": True, "name": "Profile2",
+             "ssid": ap["ssid_5g"], "hidden": ap["hidden"], "privacy": False,
+             "wps": False, "mode": "ACNPLUSAX", "channel": ap["channel_5g"],
+             "width_mhz": ap["width_5g"], "security": ap["security"],
+             "encryption": "AES", "passphrase": ap["passphrase"]},
+        ] if on else []),
     }
 
 
 def put_wifi_settings(body):
     STATE["wifi_enabled"] = bool((body or {}).get("enabled"))
+    return wifi_status()
+
+
+def put_wifi_ap(body):
+    body = body or {}
+    ap = STATE["wifi_ap"]
+    if body.get("combined"):
+        ap["ssid_2g"] = ap["ssid_5g"] = body.get("ssid", ap["ssid_2g"])
+    else:
+        ap["ssid_2g"] = body.get("ssid_2g", ap["ssid_2g"])
+        ap["ssid_5g"] = body.get("ssid_5g", ap["ssid_5g"])
+    for key in ("security", "passphrase", "channel_2g", "channel_5g",
+                "width_2g", "width_5g", "hidden"):
+        if key in body:
+            ap[key] = body[key]
     return wifi_status()
 
 
@@ -437,6 +470,7 @@ def put_update_settings(body):
 ROUTES_PUT = {
     "/api/update/settings": put_update_settings,
     "/api/wifi/settings": put_wifi_settings,
+    "/api/wifi/ap": put_wifi_ap,
 }
 
 

@@ -833,6 +833,84 @@ class AgentHttpTests(unittest.TestCase):
         finally:
             agent.wifi_cli = original_cli
 
+    def test_wifi_ap_settings_write(self):
+        token = self.login()
+        calls = []
+
+        def fake_wifi_cli(args, timeout=5):
+            cmd = args[0]
+            if cmd == "get_enable":
+                return "Wifi feature is :[1]"
+            if cmd == "get_ap_enable":
+                return "Wifi AP mode is :[1]"
+            if cmd == "get_ap_settings":
+                return ("AP mode is :[1]\nMax Number of Clients : [32]")
+            if cmd == "get_sta_list":
+                return "STA associated with the AP are : [0]"
+            if cmd == "get_caps":
+                return ("Allowed Wifi modes : [BGN, BGNPLUSAX, ACNPLUSAX]\n"
+                        "Wifi AU 2.4 GHz supported channels : [1, 2, 3]\n"
+                        "Wifi AU 5 GHz supported channels : [36, 40]")
+            if cmd == "get_ap_profile":
+                idx = args[1] if len(args) > 1 else "1"
+                if idx not in ("1", "2"):
+                    return ""
+                mode = "BGNPLUSAX" if idx == "1" else "ACNPLUSAX"
+                width = "20 MHz." if idx == "1" else "80 MHz."
+                ssid = "Test24" if idx == "1" else "Test5"
+                return ("wifi_get_ap_profile returned 0 (WIFI: success.)\n"
+                        "Profile status         : [1]\n"
+                        "Profile name           : [Profile%s]\n"
+                        "SSID                   : [%s]\n"
+                        "Ignore broadcast SSID  : [0]\n"
+                        "Wifi privacy           : [0]\n"
+                        "WPS status             : [0]\n"
+                        "Channel                : [0]\n"
+                        "Channel width          : [%s]\n"
+                        "Mode                   : [%s]\n"
+                        "Security type          : [WPA3 Transition]\n"
+                        "Encryption type        : [AES]\n"
+                        "WPA Pre-Shared Key     : [oldpass123]"
+                        % (idx, ssid, width, mode))
+            if cmd == "set_ap_profile":
+                calls.append(args[1:])
+                return "wifi_set_ap_profile returned 0 (WIFI: success.)"
+            return ""
+
+        original_cli = agent.wifi_cli
+        agent.wifi_cli = fake_wifi_cli
+        try:
+            status, payload = self.request(
+                "PUT", "/api/wifi/ap",
+                body={"combined": True, "ssid": "NewName",
+                      "security": "wpa2", "passphrase": "newpass123",
+                      "channel_5g": 40, "width_5g": 40},
+                bearer=token)
+            self.assertEqual(status, 200, payload)
+
+            # One rewrite per radio with the verified 14-arg grammar.
+            self.assertEqual(len(calls), 2)
+            for args, mode in ((calls[0], "13"), (calls[1], "14")):
+                self.assertEqual(len(args), 14)
+                self.assertEqual(args[1], "1")          # status on
+                self.assertEqual(args[3], "NewName")    # combined ssid
+                self.assertEqual(args[8], mode)
+                self.assertEqual(args[11], "3")         # wpa2
+                self.assertEqual(args[12], "4")         # aes
+                self.assertEqual(args[13], "newpass123")
+            self.assertEqual(calls[1][9], "40")         # 5G channel
+            self.assertEqual(calls[1][10], "2")         # 40 MHz
+
+            status, payload = self.request(
+                "PUT", "/api/wifi/ap",
+                body={"combined": True, "ssid": "NewName",
+                      "security": "wpa2", "passphrase": "has space"},
+                bearer=token)
+            self.assertEqual(status, 400)
+            self.assertIn("spaces", payload["error"])
+        finally:
+            agent.wifi_cli = original_cli
+
     def test_network_and_modem_read_endpoints(self):
         token = self.login()
         for path in ("/api/wifi/status", "/api/sms/list", "/api/modem/apn"):

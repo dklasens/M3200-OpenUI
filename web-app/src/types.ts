@@ -286,12 +286,28 @@ export interface WifiProfile {
   channel?: string | null
 }
 
+export interface WifiApProfile {
+  index: number
+  status: boolean
+  name?: string | null
+  ssid?: string | null
+  hidden?: boolean
+  privacy?: boolean
+  wps?: boolean
+  mode?: string | null
+  channel?: number
+  width_mhz?: number | null
+  security?: string
+  encryption?: string | null
+  passphrase?: string | null
+}
+
 export interface WifiStatus {
   available: boolean
-  /** Master Wi-Fi feature (wifi_cli get_enable). */
-  feature_enabled?: boolean
-  /** AP actually broadcasting (ap_mode != 0). */
+  /** AP enable flag — tracks the platform/OSD Wi-Fi state. */
   enabled?: boolean
+  /** Soft feature flag (wifi_cli get_enable). */
+  feature_enabled?: boolean
   country?: string | null
   ap_mode?: number | null
   max_clients?: number | null
@@ -299,6 +315,21 @@ export interface WifiStatus {
   modes?: string[]
   channels?: Record<string, string[]>
   profiles?: WifiProfile[]
+  ap_profiles?: WifiApProfile[]
+}
+
+export interface WifiApSettings {
+  combined: boolean
+  ssid?: string
+  ssid_2g?: string
+  ssid_5g?: string
+  security: string
+  passphrase?: string
+  channel_2g?: number
+  channel_5g?: number
+  width_2g?: number
+  width_5g?: number
+  hidden?: boolean
 }
 
 export interface SmsMessage {
