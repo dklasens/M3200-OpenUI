@@ -306,7 +306,8 @@ def install(agent_dir, service_path="/etc/systemd/system/m3200-agent.service",
             return finish(False, "package is missing agent/m3200_agent.py")
 
         step("preflight")
-        for path in (staged_agent, staged_qmi):
+        for path in (staged_agent, staged_qmi,
+                     os.path.join(pkg, "agent", "update.py")):
             if os.path.isfile(path):
                 rc, output = _run([sys.executable, "-m", "py_compile", path])
                 if rc != 0:
@@ -322,6 +323,10 @@ def install(agent_dir, service_path="/etc/systemd/system/m3200-agent.service",
         shutil.copy2(staged_agent, os.path.join(agent_dir, "m3200_agent.py"))
         if os.path.isfile(staged_qmi):
             shutil.copy2(staged_qmi, os.path.join(agent_dir, "qmi.py"))
+        # The updater must be able to update itself.
+        staged_update = os.path.join(pkg, "agent", "update.py")
+        if os.path.isfile(staged_update):
+            shutil.copy2(staged_update, os.path.join(agent_dir, "update.py"))
         staged_service = os.path.join(pkg, "agent", "m3200-agent.service")
         if os.path.isfile(staged_service) and os.path.isdir(
                 os.path.dirname(service_path)):
