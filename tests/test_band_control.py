@@ -911,6 +911,57 @@ class AgentHttpTests(unittest.TestCase):
         finally:
             agent.wifi_cli = original_cli
 
+    def test_wifi_open_ap_toggle(self):
+        token = self.login()
+        calls = []
+        state = {"status": "1"}
+
+        def fake_wifi_cli(args, timeout=5):
+            cmd = args[0]
+            if cmd == "get_ap_profile":
+                idx = args[1] if len(args) > 1 else "1"
+                if idx != "5":
+                    return ""
+                return ("wifi_get_ap_profile returned 0 (WIFI: success.)\n"
+                        "Profile status         : [%s]\n" % state["status"] +
+                        "Profile name           : [Profile5]\n"
+                        "SSID                   : [Factory-Test]\n"
+                        "Ignore broadcast SSID  : [0]\n"
+                        "Wifi privacy           : [0]\n"
+                        "WPS status             : [0]\n"
+                        "Channel                : [1]\n"
+                        "Channel width          : [20 MHz.]\n"
+                        "Mode                   : [BGN]\n"
+                        "Security type          : [None]\n"
+                        "Encryption type        : [None]")
+            if cmd == "set_ap_profile":
+                calls.append(args[1:])
+                state["status"] = args[2]
+                return "wifi_set_ap_profile returned 0 (WIFI: success.)"
+            return ""
+
+        original_cli = agent.wifi_cli
+        agent.wifi_cli = fake_wifi_cli
+        try:
+            status, payload = self.request("PUT", "/api/wifi/open_ap",
+                                           body={"enabled": False},
+                                           bearer=token)
+            self.assertEqual(status, 200, payload)
+            self.assertEqual(len(calls), 1)
+            args = calls[0]
+            self.assertEqual(args[0], "5")
+            self.assertEqual(args[1], "0")       # disabled
+            self.assertEqual(args[3], "Factory-Test")
+            self.assertEqual(len(args), 14)
+
+            # Already off: no rewrite on a repeat request.
+            status, _ = self.request("PUT", "/api/wifi/open_ap",
+                                     body={"enabled": False}, bearer=token)
+            self.assertEqual(status, 200)
+            self.assertEqual(len(calls), 1)
+        finally:
+            agent.wifi_cli = original_cli
+
     def test_network_and_modem_read_endpoints(self):
         token = self.login()
         for path in ("/api/wifi/status", "/api/sms/list", "/api/modem/apn"):

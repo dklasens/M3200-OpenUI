@@ -184,6 +184,8 @@ export const api = {
     put('/api/wifi/settings', { enabled }).then((d) => d as unknown as WifiStatus),
   wifiApSet: (body: WifiApSettings) =>
     put('/api/wifi/ap', body).then((d) => d as unknown as WifiStatus),
+  wifiOpenApSet: (enabled: boolean) =>
+    put('/api/wifi/open_ap', { enabled }).then((d) => d as unknown as WifiStatus),
   smsList: () => get('/api/sms/list').then((d) => d as unknown as SmsListResult),
   apn: () => get('/api/modem/apn').then((d) => d as unknown as ApnResult),
   top: () => get('/api/system/top').then((d) => d as unknown as ProcessListResult),

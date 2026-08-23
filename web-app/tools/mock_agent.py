@@ -325,7 +325,11 @@ def wifi_status():
              "wps": False, "mode": "ACNPLUSAX", "channel": ap["channel_5g"],
              "width_mhz": ap["width_5g"], "security": ap["security"],
              "encryption": "AES", "passphrase": ap["passphrase"]},
-        ] if on else []),
+        ] + ([{"index": 5, "status": True, "name": "Profile5",
+               "ssid": "Factory-Moretti", "hidden": False, "privacy": False,
+               "wps": False, "mode": "BGN", "channel": 1, "width_mhz": 20,
+               "security": "none", "encryption": "None", "passphrase": ""}]
+             if STATE.get("wifi_open", True) else []) if on else []),
     }
 
 
@@ -346,6 +350,11 @@ def put_wifi_ap(body):
                 "width_2g", "width_5g", "hidden"):
         if key in body:
             ap[key] = body[key]
+    return wifi_status()
+
+
+def put_wifi_open_ap(body):
+    STATE["wifi_open"] = bool((body or {}).get("enabled"))
     return wifi_status()
 
 
@@ -471,6 +480,7 @@ ROUTES_PUT = {
     "/api/update/settings": put_update_settings,
     "/api/wifi/settings": put_wifi_settings,
     "/api/wifi/ap": put_wifi_ap,
+    "/api/wifi/open_ap": put_wifi_open_ap,
 }
 
 

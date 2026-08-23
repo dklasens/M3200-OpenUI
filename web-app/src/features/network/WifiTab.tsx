@@ -119,11 +119,35 @@ export default function WifiTab() {
     )
   }
 
-  const openEnabled = (data.ap_profiles ?? []).find(
-    (p) => p.status && p.security === 'none',
+  const openProfile = (data?.ap_profiles ?? []).find(
+    (p) => p.security === 'none' && !p.privacy,
   )
-  const ch24 = data.channels?.['2.4'] ?? []
-  const ch5 = data.channels?.['5'] ?? []
+  const ch24 = data?.channels?.['2.4'] ?? []
+  const ch5 = data?.channels?.['5'] ?? []
+
+  async function setOpenAp(next: boolean) {
+    if (next) {
+      const ok = await confirm({
+        title: 'Enable the open factory AP?',
+        body:
+          'This profile has no password: anyone in range can join the ' +
+          'device while it is enabled.',
+        confirmLabel: 'Enable',
+        danger: true,
+      })
+      if (!ok) return
+    }
+    setBusy(true)
+    try {
+      const status = await api.wifiOpenApSet(next)
+      wifi.mutate(status)
+      toast(next ? 'Open factory AP enabled' : 'Open factory AP disabled')
+    } catch (e) {
+      toastError(e, 'Failed to change the factory AP')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
@@ -144,12 +168,25 @@ export default function WifiTab() {
         </div>
         <Row label="Max clients" value={data.max_clients ?? '\u2014'} />
         <Row label="Associated stations" value={data.associated_stations ?? '\u2014'} />
-        {openEnabled && (
-          <p className="mt-2 flex items-start gap-1.5 text-[12px] text-warn">
-            <IAlert size={14} className="mt-0.5 shrink-0" />
-            Stock profile {openEnabled.index} (“{openEnabled.ssid}”) is enabled with no
-            password. Anyone nearby can join until it is disabled on the device.
-          </p>
+        {openProfile && (
+          <div className="mt-3 flex items-center justify-between gap-3 border-t border-line/8 pt-3">
+            <div>
+              <p className="flex items-center gap-1.5 text-[13px] font-semibold text-ink">
+                {openProfile.status && <IAlert size={14} className="shrink-0 text-warn" />}
+                Open factory AP (“{openProfile.ssid}”)
+              </p>
+              <p className="text-[12px] text-ink2">
+                Leftover no-password profile from the factory configuration.
+                Keep it off so strangers cannot join.
+              </p>
+            </div>
+            <Toggle
+              checked={!!openProfile.status}
+              disabled={busy}
+              onChange={setOpenAp}
+              label="Open factory AP"
+            />
+          </div>
         )}
         {!enabled && (
           <p className="mt-2 text-[12px] text-ink3">

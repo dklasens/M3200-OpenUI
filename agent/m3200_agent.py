@@ -1299,6 +1299,34 @@ def wifi_apply_settings(cfg):
     return wifi_status()
 
 
+def wifi_set_open_profile(enabled):
+    """Enable/disable leftover open (no-password) non-guest profiles, e.g. the
+    factory test AP. Rewrites each such profile with its own parameters and
+    the requested status."""
+    profiles = wifi_get_profiles()
+    if not profiles:
+        raise ValueError("Wi-Fi profiles are not readable; turn Wi-Fi on first")
+    for prof in profiles:
+        if prof.get("security") != "none" or prof.get("privacy"):
+            continue
+        if bool(prof.get("status")) == bool(enabled):
+            continue
+        mode = prof.get("mode")
+        mode_num = WIFI_MODE_ORDER.index(mode) + 1 if mode in WIFI_MODE_ORDER else 1
+        args = [str(prof["index"]), "1" if enabled else "0",
+                prof.get("name") or ("Profile%d" % prof["index"]),
+                prof.get("ssid") or "", "1" if prof.get("hidden") else "0",
+                "0", "0", "0", str(mode_num), str(prof.get("channel") or 0),
+                str(WIFI_WIDTH_NUM.get(prof.get("width_mhz") or 20, 1)),
+                "0", "1", ""]
+        out = wifi_cli(["set_ap_profile"] + args, timeout=10)
+        if not out or "success" not in out:
+            raise ValueError("wifi_cli rejected profile %s" % prof["index"])
+    with CACHE_LOCK:
+        CACHE.pop("wifi", None)
+    return wifi_status()
+
+
 def wifi_set_enabled(enabled):
     """Platform Wi-Fi switch (the on-screen display follows it).
 
@@ -1693,6 +1721,7 @@ ROUTES = [
     ("GET", "/api/wifi/status"),
     ("PUT", "/api/wifi/settings"),
     ("PUT", "/api/wifi/ap"),
+    ("PUT", "/api/wifi/open_ap"),
     ("GET", "/api/sms/list"),
     ("GET", "/api/modem/apn"),
     ("GET", "/api/system/top"),
@@ -1892,6 +1921,12 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/wifi/ap":
                 body = self._read_json()
                 return self._ok(wifi_apply_settings(body))
+            if path == "/api/wifi/open_ap":
+                body = self._read_json()
+                enabled = body.get("enabled")
+                if not isinstance(enabled, bool):
+                    raise ValueError("'enabled' boolean is required")
+                return self._ok(wifi_set_open_profile(enabled))
             return self._err(404, "no such endpoint")
         except (ValueError, qmi.QmiError) as e:
             return self._err(400, str(e))
