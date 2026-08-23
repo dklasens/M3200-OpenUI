@@ -60,18 +60,23 @@ NR_ARFCN_BANDS = [
     (693334, 733333, "n79"), (514000, 524000, "n38"),
 ]
 
-# LTE EARFCN DL ranges -> band
+# LTE EARFCN DL ranges -> band (TS 36.101 Table 5.7.3-1)
 LTE_EARFCN_BANDS = [
     (0, 599, 1), (600, 1199, 2), (1200, 1949, 3), (1950, 2399, 4),
-    (2400, 2649, 5), (2649, 2749, 6), (2750, 3449, 7), (3450, 3799, 8),
-    (3800, 4149, 9), (4150, 4749, 10), (5010, 5179, 12), (5180, 5279, 13),
-    (5280, 5379, 14), (5730, 5849, 17), (5850, 5999, 18), (6000, 6149, 19),
-    (6150, 6449, 20), (6450, 6599, 21), (7700, 8039, 23), (8040, 8689, 25),
-    (8690, 9039, 26), (9210, 9659, 28), (9660, 9769, 29), (37750, 38249, 38),
-    (38250, 38649, 39), (38650, 39649, 40), (39650, 41589, 41),
-    (41590, 43589, 42), (43590, 45589, 43), (45590, 46589, 44),
-    (46790, 54539, 46), (55240, 56739, 48), (66436, 67335, 66),
-    (68586, 68935, 71),
+    (2400, 2649, 5), (2650, 2749, 6), (2750, 3449, 7), (3450, 3799, 8),
+    (3800, 4149, 9), (4150, 4749, 10), (4750, 4949, 11),
+    (5010, 5179, 12), (5180, 5279, 13), (5380, 5479, 14),
+    (5730, 5849, 17), (5850, 5999, 18), (6000, 6149, 19),
+    (6150, 6449, 20), (6450, 6599, 21), (6600, 7399, 22),
+    (7500, 7699, 23), (7700, 8039, 24), (8040, 8689, 25),
+    (8690, 9039, 26), (9040, 9209, 27), (9210, 9659, 28),
+    (9660, 9769, 29), (9770, 9869, 30), (9870, 9919, 31),
+    (9920, 10359, 32), (36000, 36199, 33), (36200, 36349, 34),
+    (36350, 36949, 35), (36950, 37549, 36), (37550, 37749, 37),
+    (37750, 38249, 38), (38250, 38649, 39), (38650, 39649, 40),
+    (39650, 41589, 41), (41590, 43589, 42), (43590, 45589, 43),
+    (45590, 46589, 44), (46790, 54539, 46), (55240, 56739, 48),
+    (66436, 67335, 66), (68586, 68935, 71),
 ]
 
 
@@ -90,10 +95,29 @@ def lte_band_from_earfcn(earfcn):
 
 
 def lte_band_from_qmi(enum_val):
-    """QmiNasActiveBand enum -> LTE band number (E-UTRA bands are 119+n)."""
-    if enum_val >= 120:
-        return enum_val - 119
-    return None
+    """QmiNasActiveBand enum -> LTE band number.
+
+    The QMI enum follows Qualcomm's internal band list and is NOT linear
+    above band 14 (values transcribed from libqmi qmi-enums-nas.h):
+    e.g. B33..B40 occupy enums 135..142, so B40 arrives as 142 and the
+    naive 'enum - 119' formula mislabels it as band 23. Unknown values
+    return None rather than a wrong guess.
+    """
+    return QMI_ACTIVE_BAND_TO_LTE.get(enum_val)
+
+
+QMI_ACTIVE_BAND_TO_LTE = {
+    120: 1, 121: 2, 122: 3, 123: 4, 124: 5, 125: 6, 126: 7, 127: 8,
+    128: 9, 129: 10, 130: 11, 131: 12, 132: 13, 133: 14,
+    134: 17,
+    143: 18, 144: 19, 145: 20, 146: 21,
+    152: 23, 147: 24, 148: 25, 153: 26, 164: 27, 158: 28,
+    159: 29, 160: 30, 165: 31, 154: 32,
+    135: 33, 136: 34, 137: 35, 138: 36, 139: 37, 140: 38, 141: 39,
+    142: 40, 149: 41, 150: 42, 151: 43,
+    163: 46, 166: 47, 167: 48, 161: 66, 168: 71,
+    155: 125, 156: 126, 157: 127, 162: 250,
+}
 
 
 class QmiError(Exception):
@@ -310,11 +334,15 @@ class M3200Modem:
         out = {"pcc": None, "scc": []}
         if 0x13 in tlvs:  # PCC: pci u16, earfcn u16, dl_bw u32, band u16
             v = tlvs[0x13][0]
-            band = lte_band_from_qmi(_u16(v, 8))
+            earfcn = _u16(v, 2)
+            # The EARFCN raster identifies the band unambiguously; prefer it
+            # over the active-band enum (some firmware builds populate that
+            # field oddly for TDD carriers).
             out["pcc"] = {
-                "pci": _u16(v, 0), "earfcn": _u16(v, 2),
+                "pci": _u16(v, 0), "earfcn": earfcn,
                 "dl_bw_mhz": DL_BW_MHZ.get(_u32(v, 4)),
-                "band": band or lte_band_from_earfcn(_u16(v, 2)),
+                "band": lte_band_from_earfcn(earfcn)
+                        or lte_band_from_qmi(_u16(v, 8)),
             }
         if 0x15 in tlvs:  # SCC array: count u8 + 13-byte structs
             v = tlvs[0x15][0]
@@ -323,7 +351,6 @@ class M3200Modem:
             for _ in range(n):
                 if off + 13 > len(v):
                     break
-                band = lte_band_from_qmi(_u16(v, off + 8))
                 earfcn = _u16(v, off + 2)
                 dl_bw = DL_BW_MHZ.get(_u32(v, off + 4))
                 # The modem reports unpopulated SCC slots with garbage
@@ -334,7 +361,8 @@ class M3200Modem:
                     out["scc"].append({
                         "pci": _u16(v, off), "earfcn": earfcn,
                         "dl_bw_mhz": dl_bw,
-                        "band": band or lte_band_from_earfcn(earfcn),
+                        "band": lte_band_from_earfcn(earfcn)
+                                or lte_band_from_qmi(_u16(v, off + 8)),
                         "state": v[off + 10],
                     })
                 off += 13

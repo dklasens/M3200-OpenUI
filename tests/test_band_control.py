@@ -172,6 +172,74 @@ class QmiBandWriteTests(unittest.TestCase):
         self.assertEqual(tlvs[0x2F][0], b"\x00" * 64)
 
 
+class BandDecoderTests(unittest.TestCase):
+    def test_active_band_enum_mapping_matches_libqmi(self):
+        # The QmiNasActiveBand enum is not linear above band 14; these
+        # values are transcribed from libqmi qmi-enums-nas.h.
+        cases = {
+            120: 1, 126: 7, 133: 14, 134: 17, 143: 18, 146: 21, 147: 24,
+            158: 28, 135: 33, 140: 38, 142: 40, 149: 41, 150: 42,
+            151: 43, 161: 66, 167: 48, 168: 71,
+        }
+        for enum_val, band in cases.items():
+            self.assertEqual(qmi.lte_band_from_qmi(enum_val), band)
+        for unknown in (0, 118, 119, 169, 170, 255):
+            self.assertIsNone(qmi.lte_band_from_qmi(unknown))
+
+    def test_earfcn_ranges_follow_ts_36_101(self):
+        cases = [
+            (299, 1), (600, 2), (1199, 2), (1200, 3), (3350, 7),
+            (5250, 13), (5379, 13), (5380, 14), (5479, 14), (5480, None),
+            (7500, 23), (7699, 23), (7700, 24), (8039, 24), (8040, 25),
+            (9040, 27), (9209, 27), (9210, 28), (36000, 33),
+            (38649, 39), (38650, 40), (38770, 40), (39649, 40),
+            (39650, 41), (66436, 66),
+        ]
+        for earfcn, band in cases:
+            self.assertEqual(qmi.lte_band_from_earfcn(earfcn), band,
+                             f"EARFCN {earfcn}")
+
+    def test_hardware_bands_are_reachable_via_earfcn_table(self):
+        covered = {band for _, _, band in qmi.LTE_EARFCN_BANDS}
+        for band in CAPABILITIES["lte_bands"] + [48, 66]:
+            self.assertIn(band, covered)
+
+    def _modem_with_canned_nas(self, body):
+        class CannedNas:
+            def request(self, msgid, tlvs=b"", timeout=3.0):
+                return body
+
+        modem = qmi.M3200Modem.__new__(qmi.M3200Modem)
+        modem.nas = CannedNas()
+        modem._cache = {}
+        modem._cache_lock = threading.Lock()
+        return modem
+
+    def test_ca_info_decodes_tdd_b40_pcc_despite_bad_enum(self):
+        # Regression: a live Optus B40 carrier reported active-band enum
+        # 142, which the old 'enum - 119' rule rendered as "B23".
+        pcc = (struct.pack("<H", 198) + struct.pack("<H", 38770)
+               + struct.pack("<I", 5) + struct.pack("<H", 142))
+        body = (qmi.M3200Modem._tlv(0x02, struct.pack("<HH", 0, 0))
+                + qmi.M3200Modem._tlv(0x13, pcc))
+        info = self._modem_with_canned_nas(body).ca_info()
+        self.assertEqual(info["pcc"]["earfcn"], 38770)
+        self.assertEqual(info["pcc"]["dl_bw_mhz"], 20)
+        self.assertEqual(info["pcc"]["band"], 40)
+
+    def test_ca_info_scc_uses_earfcn_first_and_drops_empty_slots(self):
+        scc_good = (struct.pack("<H", 67) + struct.pack("<H", 299)
+                    + struct.pack("<I", 4) + struct.pack("<H", 120)
+                    + bytes([1, 0]))
+        scc_garbage = struct.pack("<H", 999) + b"\x00" * 11
+        body = (qmi.M3200Modem._tlv(0x02, struct.pack("<HH", 0, 0))
+                + qmi.M3200Modem._tlv(0x15, bytes([2]) + scc_good + scc_garbage))
+        info = self._modem_with_canned_nas(body).ca_info()
+        self.assertEqual(len(info["scc"]), 1)
+        self.assertEqual(info["scc"][0]["band"], 1)
+        self.assertEqual(info["scc"][0]["state"], 1)
+
+
 class FakeModem:
     def __init__(self):
         self.preferences = {k: list(v) for k, v in CARRIER_PREFS.items()}
