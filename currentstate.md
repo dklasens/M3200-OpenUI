@@ -54,7 +54,8 @@ scripts/
   reactivate_original_pdc.py guarded selection/activation of preserved Vodafone PDC ID
   probe_pdc_store.py        fixed-ID unselected signed-clone load/delete validation
   check-api-contract.py     agent ROUTES <-> dashboard api.ts <-> mock agent lockstep check
-  deploy.ps1                build dashboard, push agent + www/, restart, health-check
+  deploy.ps1                build dashboard, push agent + www/, restart, health-check (Windows)
+  deploy.sh                 same from macOS/Linux
 agent/
   qmi.py                    QRTR/QMI library with decoders (agent copy)
   m3200_agent.py            bearer-token JSON API (25 routes) + static SPA server

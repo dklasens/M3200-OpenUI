@@ -46,12 +46,23 @@ If stage 1 fails with "EMPTY setup script", the usual culprit on Windows is the 
 
 ## 2. Deploy the agent + dashboard
 
-With root SSH working, from a machine with Node.js (^20.19 or ≥22.12):
+With root SSH working, from a machine with Node.js (^20.19 or ≥22.12) —
+Windows, macOS or Linux (the device side only needs its own Python/curl):
 
 ```powershell
-pwsh scripts/deploy.ps1                  # build dashboard + push everything
+pwsh scripts/deploy.ps1                  # Windows: build dashboard + push everything
 pwsh scripts/deploy.ps1 -SkipWebBuild    # reuse an existing web-app/dist build
 ```
+
+```bash
+scripts/deploy.sh                        # macOS / Linux
+SKIP_WEB_BUILD=1 scripts/deploy.sh [ip]  # reuse build / other tether address
+```
+
+For **another identical M3200**: run `exploit.py` against it first (installs
+your SSH key), then the deploy script; `M3200_SSH_KEY` overrides the key path.
+Afterwards the device can also update itself from GitHub releases
+(System → Updates in the dashboard).
 
 The script builds the SPA, pushes agent + dashboard to `/data/m3200-openui/`, installs and restarts the `m3200-agent` systemd service, health-checks `/api/health`, then prints your credentials. Sign in at:
 
