@@ -68,6 +68,33 @@ The root filesystem is writable ubifs, so all changes **persist across reboots**
 
 Notes: the exploit **clears any VPN profile** configured on the device, and each run rewrites `/home/root/.ssh/authorized_keys` with the key you specified.
 
+## Updates (OTA from GitHub)
+
+The device can update itself from published releases of this repo
+(`dklasens/M3200-OpenUI`):
+
+- **Cutting a release**: push a `v*` tag. `.github/workflows/release.yml`
+  builds the dashboard, packages `www/` + agent + service unit + optional
+  `apply.sh` into `m3200-openui-<tag>.tar.gz`, publishes `manifest.json`
+  (version, asset name, sha256, size) and creates the GitHub release
+  (prerelease when the tag has a `-`, e.g. `v0.2-beta`).
+- **Checking**: dashboard *System → Updates* ("Check for updates"), or
+  `POST /api/update/check`. The agent reads the newest non-draft release's
+  `manifest.json` and compares versions (prerelease-aware).
+- **Installing**: the dashboard offers the update with release notes; install
+  requires the login session plus `X-Confirm: true`. The agent downloads the
+  tarball with curl, verifies sha256 + size, extracts with path-traversal and
+  symlink guards, `py_compile`s the staged agent (preflight), backs the running
+  agent up to `*.prev`, applies files, runs `apply.sh` as root if present,
+  reloads systemd and restarts itself. Progress/result survive the restart in
+  `update/state.json`.
+- **Device-side changes with a release**: edit `apply.sh` (run as root after
+  the files land, before the restart) — e.g. the guarded EFS toggle that
+  enables/disables 5G SA. A non-zero exit is reported as a failed install.
+
+Verified live: a device on `0.2-beta` detected `v0.2.1`, installed it over the
+air and came back at `0.2.1` with `ok=true`.
+
 ## Legal
 
 For use on hardware you own (security research, custom firmware/UI work). Unauthorized access to someone else's device is illegal in most jurisdictions.

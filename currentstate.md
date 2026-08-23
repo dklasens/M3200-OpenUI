@@ -15,6 +15,8 @@ Last updated: 2026-08-23 (session 5). See `device.md` for the full hardware/prot
 | On-device agent (`agent/`) — JSON API + dashboard on **http://192.168.1.1:8080/** | ✅ deployed, systemd `m3200-agent.service` enabled + active |
 | MU5250-style port: React dashboard + bearer-token agent contract | ✅ phase 1 deployed + live-tested (session 5) |
 | Phase 2: Network + Modem groups (clients, Wi-Fi, SMS, APN, data usage) | ✅ deployed + live-tested (session 5) |
+| GitHub repo `dklasens/M3200-OpenUI` (public) + Actions release pipeline | ✅ v0.2-beta + v0.2.1 published |
+| OTA updates: dashboard check/install vs GitHub releases (sha256, preflight, apply.sh hook) | ✅ live self-update 0.2-beta → 0.2.1 verified |
 | Deploy script `scripts/deploy.ps1` (agent + built dashboard) | ✅ works |
 | NR-SA capability assessment | ✅ done (see device.md) |
 | Protected band-selection API and dashboard controls | ✅ deployed and live-tested |
