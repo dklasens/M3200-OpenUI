@@ -5,6 +5,9 @@ Open up the **Inseego M3200** (Telstra 5G Wi-Fi Pro / MiFi Pro X): a one-shot **
 Tested against firmware `THN-1.33.1.1-5.4-2.526.1.1-144.1.2-144.1.2`.
 
 > ⚠️ **Do not accept firmware updates** on a device you want to keep open — updates patch the exploit chain.
+>
+<img width="2866" height="1549" alt="image" src="https://github.com/user-attachments/assets/63774168-7946-4396-b13d-43092a14b22a" />
+<img width="2879" height="1552" alt="image" src="https://github.com/user-attachments/assets/ed967cd1-b7a6-43dc-ab2b-e8606b7cfb1e" />
 
 | Component | What it is |
 |---|---|
