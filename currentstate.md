@@ -15,8 +15,9 @@ Last updated: 2026-08-23 (session 5). See `device.md` for the full hardware/prot
 | On-device agent (`agent/`) — JSON API + dashboard on **http://192.168.1.1:8080/** | ✅ deployed, systemd `m3200-agent.service` enabled + active |
 | MU5250-style port: React dashboard + bearer-token agent contract | ✅ phase 1 deployed + live-tested (session 5) |
 | Phase 2: Network + Modem groups (clients, Wi-Fi, SMS, APN, data usage) | ✅ deployed + live-tested (session 5) |
-| GitHub repo `dklasens/M3200-OpenUI` (public) + Actions release pipeline | ✅ v0.2-beta + v0.2.1 published |
-| OTA updates: dashboard check/install vs GitHub releases (sha256, preflight, apply.sh hook) | ✅ live self-update 0.2-beta → 0.2.1 verified |
+| GitHub repo `dklasens/M3200-OpenUI` (public) + Actions release pipeline | ✅ v0.2-beta … v0.3.2 published |
+| OTA updates: dashboard check/install vs GitHub releases (sha256, preflight, apply.sh hook) | ✅ live self-update chain verified, install history persists |
+| v0.3: mesh-network logo, dashboard password change, automatic update checks (on, weekly default) | ✅ deployed + live-tested |
 | Deploy script `scripts/deploy.ps1` (agent + built dashboard) | ✅ works |
 | NR-SA capability assessment | ✅ done (see device.md) |
 | Protected band-selection API and dashboard controls | ✅ deployed and live-tested |
@@ -329,6 +330,11 @@ dashboard) and `/etc/systemd/system/m3200-agent.service`.
   cross-check PCI/ARFCN against NAS Get System Info before use.
 - Replying to a POST before draining the body aborts Windows test clients with
   RSTs; the agent reads the body up front.
+- The updater's apply step must copy `agent/update.py` too, otherwise the
+  updater can never receive its own fixes (chicken-and-egg; fixed in v0.3.2
+  after a one-time manual push). `_persist` must merge with the on-disk
+  record: a fresh process persisting a boot check previously wiped
+  `last_install` right after every install restart.
 - `wifi_cli get_ap_profile` / `get_band_status` hang (until killed) while the AP
   is disabled; `get_enable`, `get_settings`, `get_ap_settings`, `get_sta_list`
   and `get_caps` answer normally. Timeout-guard every wifi_cli call.
