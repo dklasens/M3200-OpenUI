@@ -12,3 +12,6 @@ captures/
 # local tooling
 .tools/
 *.bak
+
+# maintainer/agent runbook — local only, never published
+RELEASES.md
