@@ -1637,7 +1637,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/logger/signal/download":
                 return self._ok(logger_download())
             if path == "/api/update/status":
-                return self._ok(dict(update.status(),
+                return self._ok(dict(update.status(AGENT_DIR),
                                      current_version=update.current_version(
                                          AGENT_DIR)))
             return self._err(404, "no such endpoint")

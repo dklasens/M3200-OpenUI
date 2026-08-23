@@ -46,6 +46,43 @@ def update_dir(agent_dir):
     return os.path.join(agent_dir, "update")
 
 
+def _state_path(agent_dir):
+    return os.path.join(update_dir(agent_dir), "state.json")
+
+
+def _persist(agent_dir):
+    try:
+        os.makedirs(update_dir(agent_dir), exist_ok=True)
+        with STATE_LOCK:
+            snapshot = {
+                "last_check": STATE["last_check"],
+                "last_install": STATE["last_install"],
+                "error": STATE["error"],
+            }
+        temporary = _state_path(agent_dir) + ".tmp"
+        with open(temporary, "w", encoding="utf-8") as f:
+            json.dump(snapshot, f, indent=1)
+        os.replace(temporary, _state_path(agent_dir))
+    except OSError:
+        pass
+
+
+def _load_state(agent_dir):
+    with STATE_LOCK:
+        if STATE.get("loaded"):
+            return
+        STATE["loaded"] = True
+    try:
+        with open(_state_path(agent_dir), "r", encoding="utf-8") as f:
+            saved = json.load(f)
+        with STATE_LOCK:
+            STATE["last_check"] = saved.get("last_check")
+            STATE["last_install"] = saved.get("last_install")
+            STATE["error"] = saved.get("error")
+    except (OSError, ValueError):
+        pass
+
+
 def current_version(agent_dir):
     try:
         with open(os.path.join(agent_dir, "version"), "r",
@@ -143,6 +180,7 @@ def check(agent_dir):
     with STATE_LOCK:
         STATE["last_check"] = {"ts": time.time(), "result": result}
         STATE["error"] = None
+    _persist(agent_dir)
     return result
 
 
@@ -208,6 +246,7 @@ def install(agent_dir, service_path="/etc/systemd/system/m3200-agent.service",
             STATE["last_install"] = log
             if not ok:
                 STATE["error"] = message
+        _persist(agent_dir)
         return log
 
     try:
@@ -328,7 +367,9 @@ def start_install(agent_dir, allow_same=True):
     return status()
 
 
-def status():
+def status(agent_dir=None):
+    if agent_dir:
+        _load_state(agent_dir)
     with STATE_LOCK:
         return {
             "repo": repo(),
