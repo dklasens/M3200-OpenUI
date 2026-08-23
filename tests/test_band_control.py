@@ -189,7 +189,8 @@ class BandDecoderTests(unittest.TestCase):
     def test_earfcn_ranges_follow_ts_36_101(self):
         cases = [
             (299, 1), (600, 2), (1199, 2), (1200, 3), (3350, 7),
-            (5250, 13), (5379, 13), (5380, 14), (5479, 14), (5480, None),
+            (5250, 13), (5279, 13), (5280, None),
+            (5380, 14), (5479, 14), (5480, None),
             (7500, 23), (7699, 23), (7700, 24), (8039, 24), (8040, 25),
             (9040, 27), (9209, 27), (9210, 28), (36000, 33),
             (38649, 39), (38650, 40), (38770, 40), (39649, 40),
@@ -773,6 +774,64 @@ class AgentHttpTests(unittest.TestCase):
         status, _ = self.request("PUT", "/api/update/settings",
                                  body={"interval_secs": 5}, bearer=token)
         self.assertEqual(status, 400)
+
+    def test_wifi_settings_roundtrip(self):
+        token = self.login()
+        # Model the real device: the AP enable flag tracks the platform/OSD
+        # Wi-Fi state; the feature flag is a separate soft flag that enabling
+        # raises but disabling leaves alone.
+        state = {"feature": True, "ap": True}
+
+        def fake_wifi_cli(args, timeout=5):
+            command = args[0]
+            if command == "get_enable":
+                return "Wifi feature is : [%d]" % (1 if state["feature"] else 0)
+            if command == "set_enable":
+                state["feature"] = args[1] == "1"
+                return "ok"
+            if command == "get_ap_enable":
+                return "Wifi AP mode is : [%d]" % (1 if state["ap"] else 0)
+            if command == "set_ap_enable":
+                state["ap"] = args[1] == "1"
+                return "ok"
+            if command == "get_ap_settings":
+                return ("AP mode is : [%d]\n"
+                        "Max Number of Clients : [32]"
+                        % (1 if state["ap"] else 0))
+            return ""
+
+        original_cli = agent.wifi_cli
+        agent.wifi_cli = fake_wifi_cli
+        try:
+            status, _ = self.request("PUT", "/api/wifi/settings",
+                                     body={"enabled": False})
+            self.assertEqual(status, 401)
+
+            status, payload = self.request("PUT", "/api/wifi/settings",
+                                           body={}, bearer=token)
+            self.assertEqual(status, 400)
+            self.assertIn("enabled", payload["error"])
+
+            status, payload = self.request("PUT", "/api/wifi/settings",
+                                           body={"enabled": False},
+                                           bearer=token)
+            self.assertEqual(status, 200, payload)
+            self.assertFalse(payload["data"]["enabled"])
+            self.assertTrue(payload["data"]["feature_enabled"])
+
+            # The write busts the status cache: a fresh GET reflects it.
+            status, payload = self.get("/api/wifi/status", bearer=token)
+            self.assertEqual(status, 200)
+            self.assertFalse(payload["data"]["enabled"])
+
+            status, payload = self.request("PUT", "/api/wifi/settings",
+                                           body={"enabled": True},
+                                           bearer=token)
+            self.assertEqual(status, 200, payload)
+            self.assertTrue(payload["data"]["feature_enabled"])
+            self.assertTrue(payload["data"]["enabled"])
+        finally:
+            agent.wifi_cli = original_cli
 
     def test_network_and_modem_read_endpoints(self):
         token = self.login()

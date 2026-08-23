@@ -66,7 +66,7 @@ def dashboard_routes() -> set[str]:
 def mock_routes() -> set[str]:
     src = read(MOCK_PY)
     routes: set[str] = set()
-    for block in ("ROUTES_GET", "ROUTES_POST"):
+    for block in ("ROUTES_GET", "ROUTES_POST", "ROUTES_PUT"):
         m = re.search(rf"^{block} = \{{(.*?)^\}}", src, re.S | re.M)
         if m:
             routes |= set(PATH_RE.findall(m.group(1)))

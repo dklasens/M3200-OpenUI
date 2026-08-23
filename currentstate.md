@@ -108,8 +108,14 @@ dashboard) and `/etc/systemd/system/m3200-agent.service`.
   is only readable with the AP on; `enabled` = ap_mode != 0, `feature_enabled`
   = master switch), `/api/network/clients` (stock devicesrefresh),
   `/api/sms/list` (inbox via `AT+CMGL=4`, PDU-decoded: GSM-7 + UCS-2, unit-
-  tested) and `/api/modem/apn` (read-only `AT+CGDCONT?`). No APN/charge/
-  Wi-Fi writes are exposed: no safe write path has been proven for them.
+  tested) and `/api/modem/apn` (read-only `AT+CGDCONT?`). No APN/charge
+  writes are exposed.
+- A Wi-Fi master enable/disable write now exists: the Network > Wi-Fi tab
+  toggles `PUT /api/wifi/settings` (`{"enabled": bool}`), which runs
+  `wifi_cli set_enable <0|1>` (timeout-guarded like every wifi_cli call),
+  busts the 10 s status cache and answers with a fresh read-back. Not yet
+  live-verified on-device: the exact `set_enable` syntax still needs
+  confirmation against `/opt/nvtl/bin/wifi_cli`.
 - Device quirks found while porting: DMS model string is literally "0"
   (agent overrides to M3200), `AT+ICCID` returns ERROR (nulled), NR signal
   sentinels are -32768 raw / -3276.8 after the 0.1-unit SNR scaling,
@@ -301,6 +307,12 @@ dashboard) and `/etc/systemd/system/m3200-agent.service`.
 
 ## Gotchas learned (don't rediscover)
 
+- `QmiNasActiveBand` is **not linear** above LTE band 14: B33–B40 sit at enums
+  135–142, so a B40 PCC arrives as enum 142 and the old `enum - 119` rule
+  displayed it as "band 23" (found live on Optus 2026-08-23). Fixed in
+  `agent/qmi.py` with the full libqmi mapping (`QMI_ACTIVE_BAND_TO_LTE`) and by
+  preferring EARFCN-derived bands in `_ca_info`; the old table also had B14
+  pointing at an unallocated range (5280–5379) and merged B24 into B23.
 - PowerShell: no `<` redirect or heredocs; use `cmd /c 'ssh ... "cat > /f" < file'`.
 - On-device CLIs need `LD_LIBRARY_PATH=/opt/nvtl/lib`.
 - QRTR: local node id = 2; bind `(2, 0)`; NS at `(2, 0xFFFFFFFE)`; instance field =

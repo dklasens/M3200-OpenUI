@@ -1,11 +1,39 @@
+import { useState } from 'react'
 import { api } from '../../data/api'
 import { usePoll } from '../../data/poll'
 import { IWifi } from '../../icons'
+import { Toggle } from '../../ui/controls'
+import { confirm, toast, toastError } from '../../ui/feedback'
 import { Card, Chip, Row, Skeleton } from '../../ui/primitives'
 
 export default function WifiTab() {
   const wifi = usePoll('wifi', api.wifiStatus, 10000)
+  const [busy, setBusy] = useState(false)
   const data = wifi.data
+
+  async function setEnabled(next: boolean) {
+    if (!next) {
+      const ok = await confirm({
+        title: 'Turn off Wi-Fi?',
+        body:
+          'The access point stops broadcasting and every connected device ' +
+          'drops off the network until Wi-Fi is turned back on.',
+        confirmLabel: 'Turn off',
+        danger: true,
+      })
+      if (!ok) return
+    }
+    setBusy(true)
+    try {
+      const status = await api.wifiSettingsSet(next)
+      wifi.mutate(status)
+      toast(next ? 'Wi-Fi enabled' : 'Wi-Fi disabled')
+    } catch (e) {
+      toastError(e, 'Failed to change Wi-Fi')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   if (!data && !wifi.error) return <Skeleton className="h-64" />
   if (!data) return <p className="text-[13px] text-danger">{wifi.error}</p>
@@ -21,25 +49,31 @@ export default function WifiTab() {
   }
 
   const profiles = data.profiles ?? []
+  const enabled = !!data.enabled
 
   return (
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-      <Card title="Access point">
+      <Card
+        title="Access point"
+        action={
+          <Toggle checked={enabled} disabled={busy} onChange={setEnabled} label="Wi-Fi switch" />
+        }
+      >
         <div className="mb-2 flex items-center gap-2">
-          <Chip tone={data.enabled ? 'ok' : 'default'}>
-            <IWifi size={12} /> AP {data.enabled ? 'on' : 'off'}
+          <Chip tone={enabled ? 'ok' : 'default'}>
+            <IWifi size={12} /> Wi-Fi {enabled ? 'on' : 'off'}
           </Chip>
           <Chip tone={data.feature_enabled ? 'ok' : 'default'}>
-            Wi-Fi {data.feature_enabled ? 'enabled' : 'disabled'}
+            feature {data.feature_enabled ? 'enabled' : 'disabled'}
           </Chip>
           {data.country && <Chip>Region {data.country}</Chip>}
         </div>
         <Row label="Max clients" value={data.max_clients ?? '\u2014'} />
         <Row label="Associated stations" value={data.associated_stations ?? '\u2014'} />
-        {!data.enabled && (
+        {!enabled && (
           <p className="mt-2 text-[12px] text-ink3">
-            The AP is disabled, so SSID and security details cannot be read — the
-            firmware's Wi-Fi CLI stalls on profile queries until the AP is on.
+            Wi-Fi is off. The AP is down, so SSID and security details cannot be read —
+            the firmware's Wi-Fi CLI stalls on profile queries until it is back on.
           </p>
         )}
       </Card>

@@ -37,6 +37,7 @@ STATE = {
     "logger": {"running": False, "samples": 0, "started": 0,
                "duration": 3600, "interval": 3},
     "update_settings": {"enabled": True, "interval_secs": 604800},
+    "wifi_enabled": True,
     "bytes_rx": 117_100_577,
     "bytes_tx": 17_028_399,
     "conn_started": BOOT - 201,
@@ -295,6 +296,26 @@ SIGNAL_LOG_CSV = (
 )
 
 
+def wifi_status():
+    on = STATE["wifi_enabled"]
+    return {
+        "available": True, "feature_enabled": on, "enabled": on,
+        "country": "AU", "ap_mode": 1 if on else 0, "max_clients": 32,
+        "associated_stations": 1 if on else 0,
+        "modes": ["BGN", "BG", "B", "G", "GN", "N2", "ACN2", "A", "N5", "AN",
+                  "ACN5.", "AC5ONLY", "BGNPLUSAX", "ACNPLUSAX"],
+        "channels": {"2.4": ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"],
+                     "5": ["36", "40", "44", "48", "149", "153", "157", "161"]},
+        "profiles": ([{"interface": "wlan0", "ssid": "M3200-Demo",
+                       "security": "WPA2-PSK", "channel": "44"}] if on else []),
+    }
+
+
+def put_wifi_settings(body):
+    STATE["wifi_enabled"] = bool((body or {}).get("enabled"))
+    return wifi_status()
+
+
 ROUTES_GET = {
     "/api/dashboard": dashboard_batch,
     "/api/signal": signal,
@@ -309,18 +330,7 @@ ROUTES_GET = {
     "/api/thermal": lambda: dashboard_batch()["thermal"],
     "/api/battery": lambda: dashboard_batch()["battery"],
     "/api/clients": lambda: dashboard_batch()["clients"],
-    "/api/clients": lambda: dashboard_batch()["clients"],
-    "/api/wifi/status": lambda: {
-        "available": True, "feature_enabled": True, "enabled": True,
-        "country": "AU", "ap_mode": 1, "max_clients": 32,
-        "associated_stations": 1,
-        "modes": ["BGN", "BG", "B", "G", "GN", "N2", "ACN2", "A", "N5", "AN",
-                  "ACN5.", "AC5ONLY", "BGNPLUSAX", "ACNPLUSAX"],
-        "channels": {"2.4": ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"],
-                     "5": ["36", "40", "44", "48", "149", "153", "157", "161"]},
-        "profiles": [{"interface": "wlan0", "ssid": "M3200-Demo",
-                      "security": "WPA2-PSK", "channel": "44"}],
-    },
+    "/api/wifi/status": wifi_status,
     "/api/sms/list": lambda: {
         "available": True,
         "messages": [
@@ -426,6 +436,7 @@ def put_update_settings(body):
 
 ROUTES_PUT = {
     "/api/update/settings": put_update_settings,
+    "/api/wifi/settings": put_wifi_settings,
 }
 
 

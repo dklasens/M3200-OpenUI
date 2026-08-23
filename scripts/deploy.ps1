@@ -19,10 +19,15 @@ if (-not $SkipWebBuild) {
   Write-Host "== building dashboard =="
   Push-Location "$root\web-app"
   try {
-    if (-not (Test-Path node_modules)) { npm ci --no-audit --no-fund | Out-Null }
-    npm run build | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "web build failed" }
-  } finally { Pop-Location }
+    # npm prints notices to stderr; under PS 5.1 + EAP=Stop those stderr
+    # records would abort the deploy, so relax the preference for the build.
+    $ErrorActionPreference = "Continue"
+    if (-not (Test-Path node_modules)) { npm ci --no-audit --no-fund 2>&1 | Out-Null }
+    npm run build 2>&1 | Out-Null
+    $ok = $LASTEXITCODE -eq 0
+    $ErrorActionPreference = "Stop"
+    if (-not $ok) { throw "web build failed" }
+  } finally { Pop-Location; $ErrorActionPreference = "Stop" }
 }
 if (-not (Test-Path "$root\web-app\dist\index.html")) { throw "web-app/dist missing - build first" }
 

@@ -1095,9 +1095,12 @@ def wifi_status():
                 status[key] = cast(raw) if raw is not None else None
             except ValueError:
                 status[key] = None
-        # get_enable reports the master Wi-Fi feature; the AP itself is off
-        # while ap_mode is 0 (the stock UI's statusBarWiFiEnabled agrees).
-        status["enabled"] = status.get("ap_mode") not in (None, 0)
+        # The platform/OSD Wi-Fi state follows the AP enable flag. The soft
+        # feature flag (get_enable/set_enable) and ap_mode do NOT track the
+        # on-screen display; set_ap_enable/get_ap_enable do (verified against
+        # the stock statusBarWiFiEnabled).
+        status["enabled"] = _wifi_bracket(
+            wifi_cli(["get_ap_enable"]), "Wifi AP mode is") == "1"
         sta = wifi_cli(["get_sta_list"])
         raw = _wifi_bracket(sta, "STA associated")
         try:
@@ -1139,6 +1142,28 @@ def wifi_status():
         return status
 
     return cached("wifi", 10, fetch)
+
+
+def wifi_set_enabled(enabled):
+    """Platform Wi-Fi switch (the on-screen display follows it).
+
+    set_ap_enable is the lever that actually turns the radio/AP on or off;
+    set_enable only flips a soft feature flag. When enabling, the feature
+    flag is raised first so wifid accepts the AP. Every wifi_cli call is
+    timeout-guarded because several subcommands stall while the AP is down.
+    """
+    if enabled:
+        wifi_cli(["set_enable", "1"], timeout=8)
+        out = wifi_cli(["set_ap_enable", "1"], timeout=8)
+    else:
+        out = wifi_cli(["set_ap_enable", "0"], timeout=8)
+    if not out:
+        raise ValueError(
+            "wifi_cli set_ap_enable did not answer; the Wi-Fi state is unknown")
+    # Drop the pre-toggle snapshot so the read-back below is fresh.
+    with CACHE_LOCK:
+        CACHE.pop("wifi", None)
+    return wifi_status()
 
 
 # ----------------------------------------------------------------------
@@ -1511,6 +1536,7 @@ ROUTES = [
     ("GET", "/api/battery"),
     ("GET", "/api/clients"),
     ("GET", "/api/wifi/status"),
+    ("PUT", "/api/wifi/settings"),
     ("GET", "/api/sms/list"),
     ("GET", "/api/modem/apn"),
     ("GET", "/api/system/top"),
@@ -1701,6 +1727,12 @@ class Handler(BaseHTTPRequestHandler):
                     AGENT_DIR, enabled=body.get("enabled"),
                     interval_secs=body.get("interval_secs"))
                 return self._ok(settings)
+            if path == "/api/wifi/settings":
+                body = self._read_json()
+                enabled = body.get("enabled")
+                if not isinstance(enabled, bool):
+                    raise ValueError("'enabled' boolean is required")
+                return self._ok(wifi_set_enabled(enabled))
             return self._err(404, "no such endpoint")
         except (ValueError, qmi.QmiError) as e:
             return self._err(400, str(e))

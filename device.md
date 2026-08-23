@@ -58,7 +58,16 @@ Pure-Python (stdlib) QMI client, no extra packages, no CID allocation needed.
 | DMS Get Manufacturer/Model/Revision/MSISDN/HW rev | 0x0021–0x0024, 0x002C | device identity |
 | DMS Get Band Capabilities | 0x0045 | 0x10 legacy LTE u64 mask; 0x12 extended LTE u16 array; 0x13 generic NR5G u16 array (no separate SA/NSA capability arrays) |
 
-Band enums: QMI `QmiNasActiveBand` — LTE band N = enum (119 + N), e.g. 126 = B7, 120 = B1.
+Band enums: QMI `QmiNasActiveBand` is **not** linear above band 14. Bands 1–14
+map to enums 120–133 (126 = B7, 120 = B1), but above that the enum follows
+Qualcomm's internal band list: B17=134, B18–21=143–146, B23=152, B24=147,
+B25=148, B26=153, B27=164, B28=158, B32=154, B33–40=135–142 (so **B40 arrives
+as enum 142**, not 159), B41–43=149–151, B46=163, B48=167, B66=161, B71=168.
+The authoritative table is libqmi `qmi-enums-nas.h`; `agent/qmi.py` carries it
+as `QMI_ACTIVE_BAND_TO_LTE`. Decoders must prefer the EARFCN raster (TS 36.101)
+over this enum whenever an EARFCN is present — the naive `enum - 119` rule
+mislabels every band above B14 (live example 2026-08-23: Optus B40 shown as
+"band 23").
 DL bandwidth enum: 0=1.4, 1=3, 2=5, 3=10, 4=15, 5=20 MHz.
 RAT mode pref bits include bit3 UMTS, bit4 LTE, and **bit6 generic NR5G**. There is
 no standard bit7 NSA selector. SA versus NSA is isolated using the independent NR
