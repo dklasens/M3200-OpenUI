@@ -71,6 +71,6 @@ python scripts/check-api-contract.py # agent <-> dashboard <-> mock route lockst
 
 ## Legal & credits
 
-For use on hardware **you own** (security research, custom firmware/UI work); unauthorized access to someone else's device is illegal in most jurisdictions.
+For use on hardware **you own** (security research, custom firmware/UI work); unauthorized access to someone else's device is illegal in most states.
 
 Dashboard design ported from the MU5250 OpenUI project; the exploit technique is credited above, and the device-side Python QMI/QRTR stack was developed against the Telstra M3200.

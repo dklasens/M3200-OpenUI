@@ -232,6 +232,29 @@ class SettingsTests(unittest.TestCase):
         off = {"enabled": False, "interval_secs": 100}
         self.assertFalse(update.check_due(off, None, 1))
 
+    def test_persist_never_clobbers_on_disk_history(self):
+        original = dict(update.STATE)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                os.makedirs(update.update_dir(tmp), exist_ok=True)
+                with open(update._state_path(tmp), "w", encoding="utf-8") as f:
+                    json.dump({"last_check": {"ts": 1, "result": {}},
+                               "last_install": {"ok": True, "message": "x"},
+                               "error": None}, f)
+                # Fresh process: in-memory history is empty when the
+                # scheduler's boot check persists a new last_check.
+                update.STATE.update(
+                    last_check={"ts": 2, "result": {}}, last_install=None,
+                    error=None, loaded=True)
+                update._persist(tmp)
+                with open(update._state_path(tmp), encoding="utf-8") as f:
+                    saved = json.load(f)
+                self.assertTrue(saved["last_install"]["ok"])
+                self.assertEqual(saved["last_check"]["ts"], 2)
+        finally:
+            update.STATE.clear()
+            update.STATE.update(original)
+
 
 def base(server):
     return "http://127.0.0.1:%d" % server.server_port

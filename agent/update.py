@@ -59,6 +59,17 @@ def _persist(agent_dir):
                 "last_install": STATE["last_install"],
                 "error": STATE["error"],
             }
+        # A fresh process may not have loaded the on-disk history yet; never
+        # let an in-memory None clobber a persisted record (this previously
+        # wiped last_install right after every install restart).
+        try:
+            with open(_state_path(agent_dir), "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        except (OSError, ValueError):
+            existing = {}
+        for key in ("last_check", "last_install"):
+            if snapshot[key] is None and existing.get(key) is not None:
+                snapshot[key] = existing[key]
         temporary = _state_path(agent_dir) + ".tmp"
         with open(temporary, "w", encoding="utf-8") as f:
             json.dump(snapshot, f, indent=1)
@@ -437,6 +448,7 @@ def check_due(settings, last_check_ts, now):
 
 
 def scheduler_loop(agent_dir):
+    _load_state(agent_dir)  # honor the persisted interval from the first tick
     while True:
         try:
             settings = load_settings(agent_dir)
