@@ -14,6 +14,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history so release notes can list changes since the last tag.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -62,8 +65,28 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           PRE=""
           case "$TAG" in *-*) PRE="--prerelease" ;; esac
+          # Release notes: hand-written release-notes/<tag>.md wins; otherwise
+          # an automatic changelog of commits since the previous tag.
+          if [ -f "release-notes/$TAG.md" ]; then
+            CHANGES="$(cat "release-notes/$TAG.md")"
+          else
+            PREV="$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)"
+            if [ -n "$PREV" ]; then
+              CHANGES="$(git log --pretty=format:'- %s (%h)' "$PREV..$TAG")"
+            else
+              CHANGES="$(git log --pretty=format:'- %s (%h)' "$TAG")"
+            fi
+          fi
+          {
+            echo "## What's changed"
+            echo
+            echo "$CHANGES"
+            echo
+            echo "---"
+            echo "_The device updater reads manifest.json, verifies the tarball sha256, and applies agent + dashboard + optional apply.sh._"
+          } > dist-release/notes.md
           gh release create "$TAG" $PRE \
             --title "M3200-OpenUI $TAG" \
-            --notes "Automated build of $TAG. The device updater reads manifest.json, verifies the tarball sha256, and applies agent + dashboard + optional apply.sh." \
+            --notes-file dist-release/notes.md \
             "dist-release/m3200-openui-$TAG.tar.gz" \
             dist-release/manifest.json
